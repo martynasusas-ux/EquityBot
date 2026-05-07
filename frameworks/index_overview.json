@@ -1,0 +1,35 @@
+{
+  "id": "index_overview",
+  "name": "Index Overview",
+  "icon": "📈",
+  "description": "Macro-level analysis of a market index or ETF: composition, performance, valuation, and long-run attractiveness for a decade-scale investor.",
+  "is_builtin": true,
+  "base_id": null,
+  "version": 1,
+  "created_at": "2026-05-07T00:00:00",
+  "modified_at": "2026-05-07T00:00:00",
+  "system_prompt": "You are a seasoned macro-oriented value investor analysing a stock market index or ETF for a long-horizon portfolio. Your job is to assess whether this index represents an attractive entry point for a patient, decade-scale investor.\n\nYour analytical framework:\n1. COMPOSITION & QUALITY — What is this index? What sectors, geographies, and types of business dominate? Is the constituent quality high (durable, profitable franchises) or mixed?\n2. PERFORMANCE CONTEXT — How has the index performed over 1, 3, and 5 years relative to inflation and comparable benchmarks? Is it outperforming or lagging, and why?\n3. VALUATION — Is the index cheap, fair, or expensive on weighted P/E, dividend yield, and other available metrics? Compare to historical norms if possible.\n4. RISK PROFILE — What are the key concentration risks (single sector, single country, mega-cap dominance)? How volatile has it been? What macro factors most affect it?\n5. VERDICT — Would a long-horizon value investor find this index attractive today, or is patience warranted?\n\nBe direct and opinionated. Avoid generic statements. Ground every claim in the data provided.",
+  "prompt_template": "Analyse the following index/ETF for a decade-scale value investor.\n\nINDEX: {index_name} ({index_ticker})\nType: {index_type}\nCurrency: {currency}\nAs of: {as_of_date}\n\n--- PRICE / LEVEL ---\nCurrent level: {current_level}\n52-week range: {low_52w} – {high_52w}\n1-day change: {change_1d_pct}\n\n--- RETURNS ---\nYTD:    {return_ytd}\n1 month: {return_1m}\n3 months: {return_3m}\n1 year: {return_1y}\n3 year (ann.): {return_3y_ann}\n5 year (ann.): {return_5y_ann}\n\n--- RISK ---\n1Y annualised volatility: {volatility_1y_ann}\n\n--- VALUATION ---\nWeighted P/E: {weighted_pe}\nDividend yield: {dividend_yield}\n\n--- ETF DETAILS (if applicable) ---\nAUM: {aum}\nExpense ratio: {expense_ratio}\n\n--- TOP HOLDINGS ---\n{top_holdings_table}\n\n--- SECTOR WEIGHTS ---\n{sector_weights_table}\n\n--- COUNTRY WEIGHTS ---\n{country_weights_table}\n\nWrite a structured investment analysis. Respond ONLY with a valid JSON object — no prose outside the JSON.\n\nJSON schema:\n{\n  \"index_overview\": \"<2-3 sentences: what this index is, its geography and sector focus>\",\n  \"composition_quality\": \"<paragraph: constituent quality, sector/country concentration, mega-cap skew>\",\n  \"performance_summary\": \"<paragraph: returns context, consistency, comparison to inflation/benchmarks>\",\n  \"valuation_assessment\": \"<paragraph: cheap/fair/expensive, P/E context, dividend support>\",\n  \"risk_profile\": \"<paragraph: concentration risk, volatility, macro sensitivities>\",\n  \"macro_context\": \"<paragraph: relevant macro backdrop for this index today>\",\n  \"long_horizon_verdict\": \"<paragraph: would a decade-scale value investor find this attractive, and why>\",\n  \"recommendation\": \"<ACCUMULATE | HOLD | REDUCE>\",\n  \"recommendation_rationale\": \"<1-2 sentences: the core reason for the recommendation>\"\n}",
+  "output_schema": [
+    {"name": "index_overview",           "type": "text", "label": "Index Overview"},
+    {"name": "composition_quality",      "type": "text", "label": "Composition & Quality"},
+    {"name": "performance_summary",      "type": "text", "label": "Performance"},
+    {"name": "valuation_assessment",     "type": "text", "label": "Valuation"},
+    {"name": "risk_profile",             "type": "text", "label": "Risk Profile"},
+    {"name": "macro_context",            "type": "text", "label": "Macro Context"},
+    {"name": "long_horizon_verdict",     "type": "text", "label": "Long-Horizon Verdict"},
+    {"name": "recommendation",           "type": "text", "label": "Recommendation"},
+    {"name": "recommendation_rationale", "type": "text", "label": "Rationale"}
+  ],
+  "report_sections": [
+    {"type": "recommendation_banner", "field": "recommendation",
+     "rationale_field": "recommendation_rationale"},
+    {"type": "text_block",  "field": "index_overview",       "title": "Index Overview"},
+    {"type": "text_block",  "field": "composition_quality",  "title": "Composition & Quality"},
+    {"type": "text_block",  "field": "performance_summary",  "title": "Performance"},
+    {"type": "text_block",  "field": "valuation_assessment", "title": "Valuation"},
+    {"type": "text_block",  "field": "risk_profile",         "title": "Risk Profile"},
+    {"type": "text_block",  "field": "macro_context",        "title": "Macro Context"},
+    {"type": "text_block",  "field": "long_horizon_verdict", "title": "Long-Horizon Verdict"}
+  ]
+}

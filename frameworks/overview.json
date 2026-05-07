@@ -1,0 +1,116 @@
+{
+  "id": "overview",
+  "name": "Investment Memo",
+  "icon": "📋",
+  "description": "3-page investment memo: financial table, snapshot, bull/bear case, peer comparison, investment checklist.",
+  "is_builtin": true,
+  "base_id": null,
+  "version": 1,
+  "created_at": "2025-01-01T00:00:00",
+  "modified_at": "2025-01-01T00:00:00",
+  "system_prompt": "You are \"Your Humble EquityBot\" — a disciplined value investing analyst.\n\nYour core philosophy:\n- Truth-seeking over narrative comfort. Facts first, stories second.\n- You operate like an owner-operator, not a trader. Decade-scale horizon.\n- Separate temporary underperformance from permanent thesis breaks.\n- Prioritize business quality + moat + valuation + management integrity.\n- Devil's Advocate is not optional — you always stress-test your own thesis.\n- Flag accounting red flags explicitly when present.\n- Your language is precise, direct, and free of financial jargon padding.\n\nYou never speculate beyond the data. When data is unavailable, you say so.\nYou are not a cheerleader. Balanced analysis is your standard.",
+  "prompt_template": "__builtin__",
+  "output_schema": [
+    {
+      "name": "snapshot",
+      "type": "string",
+      "description": "800-1000 word Investment Snapshot covering business model, industry position, moat, growth drivers, capital allocation, and recent financial highlights.",
+      "required": true
+    },
+    {
+      "name": "fun_facts",
+      "type": "list",
+      "description": "3 specific, verifiable, surprising facts about the company.",
+      "required": true
+    },
+    {
+      "name": "bull_case",
+      "type": "string",
+      "description": "400-600 word bull case: valuation attractiveness, market mispricing, moat, 3-5x scenario.",
+      "required": true
+    },
+    {
+      "name": "bear_case",
+      "type": "string",
+      "description": "400-600 word Devil's Advocate bear case: what's priced in, structural risks, accounting flags, management concerns.",
+      "required": true
+    },
+    {
+      "name": "recommendation",
+      "type": "enum",
+      "description": "Investment recommendation.",
+      "required": true,
+      "enum_values": ["BUY", "HOLD", "SELL"]
+    },
+    {
+      "name": "recommendation_rationale",
+      "type": "string",
+      "description": "100-150 word rationale with fair value range and key decision variable.",
+      "required": true
+    },
+    {
+      "name": "suggested_peers",
+      "type": "list",
+      "description": "4-6 direct competitors or closest sector comparables as {ticker, name, exchange} objects.",
+      "required": true
+    }
+  ],
+  "report_sections": [
+    {
+      "id": "financial_table",
+      "type": "financial_table",
+      "title": "Financial Summary",
+      "field": "__financial_table__",
+      "order": 1
+    },
+    {
+      "id": "snapshot",
+      "type": "text_block",
+      "title": "Investment Snapshot",
+      "field": "snapshot",
+      "order": 2
+    },
+    {
+      "id": "fun_facts",
+      "type": "bullet_list",
+      "title": "Did You Know?",
+      "field": "fun_facts",
+      "order": 3
+    },
+    {
+      "id": "bull_case",
+      "type": "text_block",
+      "title": "Bull Case",
+      "field": "bull_case",
+      "order": 4
+    },
+    {
+      "id": "bear_case",
+      "type": "text_block",
+      "title": "Bear Case",
+      "field": "bear_case",
+      "order": 5
+    },
+    {
+      "id": "recommendation",
+      "type": "recommendation_banner",
+      "title": "Recommendation",
+      "field": "recommendation",
+      "order": 6
+    },
+    {
+      "id": "peer_comparison",
+      "type": "peer_table",
+      "title": "Peer Comparison",
+      "field": "__peers__",
+      "order": 7
+    },
+    {
+      "id": "checklist",
+      "type": "checklist",
+      "title": "Investment Checklist",
+      "field": "__checklist__",
+      "order": 8
+    }
+  ]
+}

@@ -1,0 +1,468 @@
+"""
+data_manager.py — Data waterfall orchestrator for Your Humble EquityBot.
+
+This is the single entry point for all data fetching.
+Call DataManager().get(ticker) and receive a fully populated CompanyData object.
+
+Waterfall logic (stops as soon as data is "good enough"):
+  Tier 1a: yfinance         → always runs first (fast, global, free)
+  Tier 1b: SEC EDGAR        → runs for US tickers only (10-year depth)
+  Tier 2:  Alpha Vantage    → runs for non-US OR when <7 years of data remain
+  Tier 4:  FMP (paid)       → runs only if critical fields still missing
+
+Merge strategy:
+  - yfinance provides the market data skeleton (price, cap, ratios)
+  - EDGAR / Alpha Vantage fill in the 10-year annual history
+  - FMP fills any remaining gaps
+  - Calculated fields are derived last, after all sources are merged
+
+Caching:
+  - Results are saved to cache/<ticker>.json with a 24-hour TTL
+  - On a cache hit, no API calls are made at all
+"""
+
+from __future__ import annotations
+import json
+import logging
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, List
+
+from .base import CompanyData, AnnualFinancials, ForwardEstimates, DataSourceResult
+from .index_adapter import IndexAdapter, IndexData
+from .yfinance_adapter import YFinanceAdapter
+from .edgar_adapter import EdgarAdapter
+from .alpha_vantage_adapter import AlphaVantageAdapter
+from .fmp_adapter import FMPAdapter
+from .fred_adapter import FredAdapter, MacroSnapshot
+from config import (
+    CACHE_DIR, CACHE_TTL_HOURS, HISTORICAL_YEARS,
+    ENABLE_YFINANCE, ENABLE_EDGAR, ENABLE_ALPHA_VANTAGE, ENABLE_FMP, ENABLE_FRED,
+)
+
+logger = logging.getLogger(__name__)
+
+# Minimum years of annual history we consider "sufficient" before skipping Tier 2
+MIN_HISTORY_YEARS = 7
+
+# Fields we consider "critical" — if any are None after all tiers, we flag them
+CRITICAL_FIELDS = [
+    "name", "current_price", "market_cap",
+    "net_margin", "roe", "ev_ebit", "pe_ratio",
+]
+
+
+class DataManager:
+    """
+    Single entry point for all company data fetching.
+
+    Usage:
+        dm = DataManager()
+        company = dm.get("WKL.AS")          # single company
+        companies = dm.get_many(["AAPL", "MSFT", "GOOGL"])  # batch
+    """
+
+    def __init__(self):
+        self._yf    = YFinanceAdapter()    if ENABLE_YFINANCE      else None
+        self._edgar = EdgarAdapter()       if ENABLE_EDGAR         else None
+        self._av    = AlphaVantageAdapter() if ENABLE_ALPHA_VANTAGE else None
+        self._fmp   = FMPAdapter()         if ENABLE_FMP           else None
+        self._fred  = FredAdapter()        if ENABLE_FRED          else None
+        self._idx   = IndexAdapter()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def classify_ticker(ticker: str) -> str:
+        """
+        Return "equity", "etf", or "index" for the given ticker.
+        Pure heuristic first (fast), then yfinance confirmation.
+        """
+        t = ticker.strip().upper()
+        # Pure index tickers always start with ^ or contain common index patterns
+        if t.startswith("^"):
+            return "index"
+        try:
+            import yfinance as yf
+            qt = (yf.Ticker(t).info or {}).get("quoteType", "").upper()
+            if qt == "ETF":
+                return "etf"
+            if qt == "INDEX":
+                return "index"
+        except Exception:
+            pass
+        return "equity"
+
+    def get_macro(self, force_refresh: bool = False) -> MacroSnapshot:
+        """Return the latest FRED macro snapshot (cached 6 hours)."""
+        if self._fred:
+            return self._fred.fetch(force_refresh=force_refresh)
+        return MacroSnapshot()
+
+    def get_index(self, ticker: str, force_refresh: bool = False) -> IndexData:
+        """Fetch index / ETF data. Always uses IndexAdapter (no company waterfall)."""
+        ticker = ticker.strip().upper()
+        logger.info(f"[DataManager] Index requested: {ticker}")
+        return self._idx.fetch(ticker)
+
+    def get(self, ticker: str, force_refresh: bool = False) -> CompanyData:
+        """
+        Fetch and return a fully populated CompanyData for one ticker.
+        Uses cache if available and fresh. Pass force_refresh=True to bypass cache.
+        """
+        ticker = ticker.strip().upper()
+        logger.info(f"[DataManager] Requested: {ticker}")
+
+        # ── Cache check ───────────────────────────────────────────────────────
+        if not force_refresh:
+            cached = self._load_cache(ticker)
+            if cached:
+                logger.info(f"[DataManager] Cache hit: {ticker} ({cached.completeness_pct()}% complete)")
+                return cached
+
+        # ── Tier 1a: yfinance ─────────────────────────────────────────────────
+        company: Optional[CompanyData] = None
+
+        if self._yf and ENABLE_YFINANCE:
+            result = self._yf.fetch(ticker)
+            if result.success and result.data:
+                company = result.data
+                logger.info(f"[DataManager] yfinance OK: {company.completeness_pct()}% complete, "
+                            f"years: {company.year_range()}")
+            else:
+                logger.warning(f"[DataManager] yfinance failed for {ticker}: {result.error}")
+
+        # If yfinance completely failed, create an empty skeleton
+        if company is None:
+            company = CompanyData(
+                ticker=ticker,
+                input_ticker=ticker,
+                fetch_timestamp=datetime.utcnow().isoformat(),
+                as_of_date=datetime.utcnow().strftime("%Y-%m-%d"),
+            )
+
+        # ── Tier 1b: SEC EDGAR (US tickers only) ─────────────────────────────
+        is_us_ticker = _is_us_ticker(ticker)
+
+        if self._edgar and ENABLE_EDGAR and is_us_ticker:
+            if len(company.annual_financials) < MIN_HISTORY_YEARS:
+                logger.info(f"[DataManager] Running EDGAR for {ticker} "
+                            f"(have {len(company.annual_financials)} years, need {MIN_HISTORY_YEARS})…")
+                result = self._edgar.fetch(ticker)
+                if result.success and result.data:
+                    self._merge(company, result.data, prefer_source="edgar",
+                                fields=["annual_financials", "name", "cik"])
+                    logger.info(f"[DataManager] After EDGAR: {len(company.annual_financials)} years")
+                else:
+                    logger.warning(f"[DataManager] EDGAR failed: {result.error}")
+
+        # ── Tier 2: Alpha Vantage (non-US or still need more history) ─────────
+        if self._av and ENABLE_ALPHA_VANTAGE:
+            needs_history = len(company.annual_financials) < MIN_HISTORY_YEARS
+            if needs_history:
+                logger.info(f"[DataManager] Running Alpha Vantage for {ticker} "
+                            f"(have {len(company.annual_financials)} years)…")
+                result = self._av.fetch(ticker)
+                if result.success and result.data:
+                    self._merge(company, result.data, prefer_source="alpha_vantage",
+                                fields=["annual_financials"])
+                    logger.info(f"[DataManager] After Alpha Vantage: "
+                                f"{len(company.annual_financials)} years")
+                else:
+                    logger.warning(f"[DataManager] Alpha Vantage failed: {result.error}")
+
+        # ── Tier 4: FMP (paid — only if critical fields still missing) ─────────
+        if self._fmp and ENABLE_FMP:
+            missing = self._find_missing_critical(company)
+            if missing:
+                logger.info(f"[DataManager] Running FMP for {ticker} — "
+                            f"missing critical: {missing}")
+                result = self._fmp.fetch(ticker)
+                if result.success and result.data:
+                    self._merge(company, result.data, prefer_source="fmp",
+                                fields=["annual_financials"] + missing)
+                    logger.info(f"[DataManager] After FMP: {company.completeness_pct()}% complete")
+                else:
+                    logger.warning(f"[DataManager] FMP failed: {result.error}")
+
+        # ── Final derived calculations ─────────────────────────────────────────
+        company.calculate_current_ratios()
+        for af in company.annual_financials.values():
+            af.calculate_derived()
+
+        # ── Record what's still missing ────────────────────────────────────────
+        company.missing_fields = self._find_missing_critical(company)
+        if company.missing_fields:
+            logger.warning(f"[DataManager] {ticker} still missing: {company.missing_fields}")
+
+        # ── Save to cache ──────────────────────────────────────────────────────
+        self._save_cache(ticker, company)
+
+        logger.info(f"[DataManager] Final: {company.summary()}")
+        return company
+
+    def get_many(
+        self, tickers: List[str], force_refresh: bool = False
+    ) -> dict[str, CompanyData]:
+        """
+        Fetch data for multiple tickers. Returns {ticker: CompanyData}.
+        Adds a small delay between tickers to be polite to APIs.
+        """
+        results = {}
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            logger.info(f"[DataManager] Processing {i}/{total}: {ticker}")
+            results[ticker] = self.get(ticker, force_refresh=force_refresh)
+            if i < total:
+                time.sleep(1.0)  # brief pause between companies
+        return results
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Merge logic
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _merge(
+        self,
+        target: CompanyData,
+        source: CompanyData,
+        prefer_source: str,
+        fields: List[str],
+    ) -> None:
+        """
+        Merge fields from source into target (in-place).
+
+        For annual_financials: union of years; for each year, fill in
+        any None fields from source that target is missing.
+        For scalar fields: only copy if target field is None.
+        """
+        if "annual_financials" in fields:
+            for year, src_af in source.annual_financials.items():
+                if year not in target.annual_financials:
+                    # New year — add it wholesale
+                    target.annual_financials[year] = src_af
+                else:
+                    # Existing year — fill in missing fields
+                    tgt_af = target.annual_financials[year]
+                    self._merge_annual(tgt_af, src_af)
+
+        # Scalar fields
+        scalar_fields = [f for f in fields if f != "annual_financials"]
+        for field in scalar_fields:
+            if hasattr(target, field) and hasattr(source, field):
+                if getattr(target, field) is None and getattr(source, field) is not None:
+                    setattr(target, field, getattr(source, field))
+
+        # Track sources
+        if prefer_source not in target.data_sources:
+            target.data_sources.append(prefer_source)
+
+    def _merge_annual(self, target: AnnualFinancials, source: AnnualFinancials) -> None:
+        """Fill None fields in target AnnualFinancials from source."""
+        fields = [
+            "revenue", "gross_profit", "ebitda", "ebit", "net_income",
+            "eps_diluted", "dividends_per_share",
+            "gross_margin", "ebit_margin", "ebitda_margin", "net_margin",
+            "total_assets", "total_debt", "cash", "net_debt", "total_equity",
+            "shares_outstanding", "operating_cash_flow", "capex", "fcf",
+            "roe", "roa",
+        ]
+        for f in fields:
+            if getattr(target, f, None) is None and getattr(source, f, None) is not None:
+                setattr(target, f, getattr(source, f))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Cache
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _cache_path(self, ticker: str) -> Path:
+        safe = ticker.replace(".", "_").replace("/", "_")
+        return CACHE_DIR / f"{safe}.json"
+
+    def _save_cache(self, ticker: str, company: CompanyData) -> None:
+        """Serialize CompanyData to JSON and save to disk."""
+        try:
+            path = self._cache_path(ticker)
+            data = _company_to_dict(company)
+            data["_cached_at"] = datetime.utcnow().isoformat()
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            logger.debug(f"[DataManager] Cached {ticker} → {path}")
+        except Exception as e:
+            logger.warning(f"[DataManager] Cache write failed for {ticker}: {e}")
+
+    def _load_cache(self, ticker: str) -> Optional[CompanyData]:
+        """Load and deserialize cached CompanyData if still fresh."""
+        path = self._cache_path(ticker)
+        if not path.exists():
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            cached_at_str = data.get("_cached_at")
+            if not cached_at_str:
+                return None
+
+            cached_at = datetime.fromisoformat(cached_at_str)
+            age = datetime.utcnow() - cached_at
+            if age > timedelta(hours=CACHE_TTL_HOURS):
+                logger.debug(f"[DataManager] Cache expired for {ticker} (age: {age})")
+                return None
+
+            return _dict_to_company(data)
+        except Exception as e:
+            logger.warning(f"[DataManager] Cache read failed for {ticker}: {e}")
+            return None
+
+    def clear_cache(self, ticker: str = None) -> int:
+        """
+        Clear cache for one ticker, or all tickers if ticker is None.
+        Returns number of files deleted.
+        """
+        if ticker:
+            path = self._cache_path(ticker)
+            if path.exists():
+                path.unlink()
+                return 1
+            return 0
+        else:
+            count = 0
+            for f in CACHE_DIR.glob("*.json"):
+                f.unlink()
+                count += 1
+            logger.info(f"[DataManager] Cleared {count} cache files.")
+            return count
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _find_missing_critical(self, company: CompanyData) -> List[str]:
+        """Return list of critical field names that are still None."""
+        return [f for f in CRITICAL_FIELDS if getattr(company, f, None) is None]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Serialization helpers (CompanyData ↔ dict for JSON cache)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _company_to_dict(c: CompanyData) -> dict:
+    """Convert CompanyData to a JSON-serializable dict."""
+    import dataclasses
+    d = {}
+    for k, v in c.__dict__.items():
+        if k == "annual_financials":
+            continue
+        elif k == "forward_estimates" and v is not None:
+            # Explicitly serialize ForwardEstimates as a plain dict
+            d[k] = {fld.name: getattr(v, fld.name)
+                    for fld in dataclasses.fields(v)}
+        else:
+            d[k] = v
+    d["annual_financials"] = {
+        str(yr): af.__dict__
+        for yr, af in c.annual_financials.items()
+    }
+    return d
+
+
+def _dict_to_company(d: dict) -> CompanyData:
+    """Reconstruct CompanyData from a cached dict."""
+    import dataclasses
+    annual_raw = d.pop("annual_financials", {})
+    fe_raw     = d.pop("forward_estimates", None)
+    d.pop("_cached_at", None)
+
+    # Only pass fields that CompanyData actually has
+    valid_fields = {f.name for f in dataclasses.fields(CompanyData)}
+    clean = {k: v for k, v in d.items() if k in valid_fields}
+
+    company = CompanyData(**clean)
+
+    # Reconstruct ForwardEstimates if present
+    if isinstance(fe_raw, dict) and "year" in fe_raw:
+        try:
+            valid_fe = {f.name for f in dataclasses.fields(ForwardEstimates)}
+            clean_fe = {k: v for k, v in fe_raw.items() if k in valid_fe}
+            company.forward_estimates = ForwardEstimates(**clean_fe)
+        except Exception:
+            pass
+
+    for yr_str, af_dict in annual_raw.items():
+        try:
+            yr = int(yr_str)
+            valid_af = {f.name for f in dataclasses.fields(AnnualFinancials)}
+            clean_af = {k: v for k, v in af_dict.items() if k in valid_af}
+            company.annual_financials[yr] = AnnualFinancials(**clean_af)
+        except Exception:
+            pass
+
+    return company
+
+
+def _is_us_ticker(ticker: str) -> bool:
+    """
+    Heuristic: ticker is US-listed if it has no exchange suffix
+    (or has a class-share suffix like .A, .B which are still US).
+    """
+    parts = ticker.split(".")
+    if len(parts) == 1:
+        return True
+    suffix = parts[-1].upper()
+    # Class-share suffixes used on US exchanges
+    if suffix in ("A", "B", "C", "K", "P", "W", "R", "U", "WS"):
+        return True
+    return False
+
+
+# ── Quick integration test ────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    dm = DataManager()
+
+    test_cases = [
+        ("AAPL",      "US  — Apple Inc."),
+        ("MSFT",      "US  — Microsoft"),
+        ("WKL.AS",    "EU  — Wolters Kluwer (Amsterdam)"),
+        ("NOKIA.HE",  "EU  — Nokia (Helsinki)"),
+        ("ATCO-A.ST", "EU  — Atlas Copco (Stockholm)"),
+    ]
+
+    # Allow overriding test tickers from CLI: python data_manager.py AAPL MSFT
+    if len(sys.argv) > 1:
+        test_cases = [(t, t) for t in sys.argv[1:]]
+
+    for ticker, label in test_cases:
+        print(f"\n{'='*65}")
+        print(f"  {label}")
+        print(f"{'='*65}")
+        c = dm.get(ticker)
+        print(f"  {c.summary()}")
+        print(f"  Missing fields: {c.missing_fields or 'none'}")
+        print(f"  Annual history ({c.year_range()}):")
+        for yr in c.sorted_years()[:5]:
+            af = c.annual_financials[yr]
+            print(
+                f"    {yr}: Rev={_fmt(af.revenue)}M | EBIT={_fmt(af.ebit)}M | "
+                f"NI={_fmt(af.net_income)}M | EPS={af.eps_diluted} | "
+                f"FCF={_fmt(af.fcf)}M"
+            )
+        print(f"  Ratios: P/E={c.pe_ratio} | EV/EBIT={c.ev_ebit} | "
+              f"EV/Sales={c.ev_sales} | ROE={_pct(c.roe)} | "
+              f"NetMargin={_pct(c.net_margin)} | DivYield={_pct(c.dividend_yield)}")
+
+
+def _fmt(v) -> str:
+    return f"{v:,.0f}" if v is not None else "n/a"
+
+def _pct(v) -> str:
+    return f"{v*100:.1f}%" if v is not None else "n/a"

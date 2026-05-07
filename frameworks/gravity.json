@@ -1,0 +1,147 @@
+{
+  "id": "gravity",
+  "name": "Gravity Taxers",
+  "icon": "⚖️",
+  "description": "Choke-point analysis: 10 structural gravity dimensions + revenue model quality assessment.",
+  "is_builtin": true,
+  "base_id": null,
+  "version": 1,
+  "created_at": "2025-01-01T00:00:00",
+  "modified_at": "2025-01-01T00:00:00",
+  "system_prompt": "You are \"Your Humble EquityBot\" — a specialist in identifying and\nevaluating businesses that function as economic choke points, or \"Gravity Taxers.\"\n\nYour analytical DNA:\n- You think like a toll-road owner: what is the volume of economic activity flowing\n  through this business, and how durably can it extract a fee from that flow?\n- You distinguish between businesses that are merely important and those that are\n  genuinely irreplaceable within their value chain.\n- You are sceptical of \"sticky\" claims — stickiness must be evidenced by pricing\n  data, churn rates, or switching cost analysis. Anecdotes don't count.\n- You probe revenue quality ruthlessly: recurring subscription revenue trading at\n  a premium to one-time transactional revenue is a core tenet of your framework.\n- You compare every candidate against canonical Gravity Taxers: Visa, Mastercard,\n  Moody's, S&P Global, MSCI, FactSet, Verisk, CoStar, Wolters Kluwer, RELX.\n  Most companies do not clear this bar.\n- Capital efficiency is non-negotiable: a true Gravity Taxer generates high ROIC\n  because the \"toll booth\" requires little reinvestment to maintain its position.\n- You never over-score: most businesses are not choke points. A score of 7-8/10\n  on Choke Point Essentialness requires genuine, near-irreplaceable positioning.",
+  "prompt_template": "__builtin__",
+  "output_schema": [
+    {
+      "name": "gravity_profile",
+      "type": "string",
+      "description": "200-300 word description of the company as a potential Gravity Taxer: economic flow, bypass difficulty, toll-extraction evidence, canonical comparison.",
+      "required": true
+    },
+    {
+      "name": "revenue_model",
+      "type": "object",
+      "description": "{recurring_pct_estimate, revenue_visibility, pricing_power, capex_intensity, pricing_evidence}.",
+      "required": true
+    },
+    {
+      "name": "gravity_dimensions",
+      "type": "list",
+      "description": "10 scored dimensions: {number, title, score (1-5), rationale}.",
+      "required": true
+    },
+    {
+      "name": "total_gravity_score",
+      "type": "integer",
+      "description": "Sum of all 10 dimension scores. Maximum 50.",
+      "required": true
+    },
+    {
+      "name": "gravity_grade",
+      "type": "enum",
+      "description": "Grade: A=45+, B=38+, C=30+, D=22+, F<22.",
+      "required": true,
+      "enum_values": ["A", "B", "C", "D", "F"]
+    },
+    {
+      "name": "gravity_summary",
+      "type": "string",
+      "description": "100-150 word synthesis: genuine Gravity Taxer or not, spectrum position, what would raise the score.",
+      "required": true
+    },
+    {
+      "name": "canonical_comparison",
+      "type": "string",
+      "description": "100-150 word comparison to canonical set (Visa, Moody's, MSCI, RELX, etc.).",
+      "required": true
+    },
+    {
+      "name": "revenue_flywheel",
+      "type": "string",
+      "description": "100-150 word description of self-reinforcing revenue dynamics (or absence thereof).",
+      "required": true
+    },
+    {
+      "name": "key_risks",
+      "type": "list",
+      "description": "4 specific risks: structural, competitive, technology disruption, regulatory/macro.",
+      "required": true
+    },
+    {
+      "name": "conclusion",
+      "type": "string",
+      "description": "200-300 word investment conclusion from the Gravity Taxer perspective.",
+      "required": true
+    },
+    {
+      "name": "recommendation",
+      "type": "enum",
+      "description": "Investment recommendation.",
+      "required": true,
+      "enum_values": ["BUY", "HOLD", "SELL"]
+    },
+    {
+      "name": "recommendation_rationale",
+      "type": "string",
+      "description": "100-150 word rationale grounded in gravity analysis.",
+      "required": true
+    }
+  ],
+  "report_sections": [
+    {
+      "id": "gravity_profile",
+      "type": "text_block",
+      "title": "Gravity Profile",
+      "field": "gravity_profile",
+      "order": 1
+    },
+    {
+      "id": "gravity_scorecard",
+      "type": "gravity_scorecard",
+      "title": "10 Gravity Dimensions",
+      "field": "gravity_dimensions",
+      "order": 2
+    },
+    {
+      "id": "gravity_summary",
+      "type": "text_block",
+      "title": "Gravity Assessment",
+      "field": "gravity_summary",
+      "order": 3
+    },
+    {
+      "id": "canonical_comparison",
+      "type": "text_block",
+      "title": "Canonical Comparison",
+      "field": "canonical_comparison",
+      "order": 4
+    },
+    {
+      "id": "revenue_flywheel",
+      "type": "text_block",
+      "title": "Revenue Flywheel",
+      "field": "revenue_flywheel",
+      "order": 5
+    },
+    {
+      "id": "key_risks",
+      "type": "bullet_list",
+      "title": "Key Risks",
+      "field": "key_risks",
+      "order": 6
+    },
+    {
+      "id": "conclusion",
+      "type": "text_block",
+      "title": "Investment Conclusion",
+      "field": "conclusion",
+      "order": 7
+    },
+    {
+      "id": "recommendation",
+      "type": "recommendation_banner",
+      "title": "Recommendation",
+      "field": "recommendation",
+      "order": 8
+    }
+  ]
+}
