@@ -191,7 +191,19 @@ class YFinanceAdapter:
                 financials = yt.financials          # Income statement
                 balance    = yt.balance_sheet       # Balance sheet
                 cashflow   = yt.cashflow            # Cash flows
-                self._parse_annual_history(company, financials, balance, cashflow, fields_filled)
+                # Quarterly data used as cross-check for partial-year annual figures
+                try:
+                    q_financials = yt.quarterly_financials
+                    q_cashflow   = yt.quarterly_cashflow
+                    q_balance    = yt.quarterly_balance_sheet
+                except Exception:
+                    q_financials = q_cashflow = q_balance = None
+                self._parse_annual_history(
+                    company, financials, balance, cashflow, fields_filled,
+                    q_financials=q_financials,
+                    q_cashflow=q_cashflow,
+                    q_balance=q_balance,
+                )
             except Exception as e:
                 logger.warning(f"[yfinance] Could not fetch annual history for {ticker}: {e}")
 
@@ -309,6 +321,59 @@ class YFinanceAdapter:
                 duration_seconds=time.time() - start,
             )
 
+    # ── Quarterly cross-validation helpers ───────────────────────────────────
+
+    @staticmethod
+    def _sum_quarterly(
+        q_df: pd.DataFrame,
+        row_key: str,
+        year: int,
+        fiscal_month_end: int = 12,
+    ) -> Optional[float]:
+        """
+        Sum up to 4 quarterly values whose period-end dates fall within the
+        fiscal year ending in *fiscal_month_end* of *year*.
+
+        For a Dec-31 year (fiscal_month_end=12) this is Q1–Q4 of calendar year.
+        For a Sep-30 year (fiscal_month_end=9) this is Oct(y-1)–Sep(y).
+
+        Returns the sum in millions, or None if fewer than 3 quarters found.
+        """
+        if q_df is None or q_df.empty:
+            return None
+        # Collect columns whose date falls in the fiscal year window
+        fy_end   = pd.Timestamp(year=year,          month=fiscal_month_end, day=1) + pd.offsets.MonthEnd(0)
+        fy_start = pd.Timestamp(year=year - 1,      month=fiscal_month_end, day=1) + pd.offsets.MonthEnd(0) + pd.Timedelta(days=1)
+
+        candidates = [c for c in q_df.columns
+                      if fy_start <= pd.Timestamp(c) <= fy_end]
+        if len(candidates) < 3:
+            return None          # not enough quarters — don't override
+
+        total = 0.0
+        for c in candidates:
+            v = _df_val(q_df, row_key, q_df.columns.get_loc(c))
+            if v is None:
+                return None      # any missing quarter → can't sum reliably
+            total += v
+        return total
+
+    @staticmethod
+    def _detect_fiscal_month_end(financials: pd.DataFrame) -> int:
+        """
+        Inspect the annual financials columns to guess fiscal year-end month.
+        e.g. columns 2024-12-31 → 12,  2024-09-30 → 9.
+        Default: 12 (Dec).
+        """
+        if financials is None or financials.empty:
+            return 12
+        try:
+            return int(pd.Timestamp(financials.columns[0]).month)
+        except Exception:
+            return 12
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def _parse_annual_history(
         self,
         company: CompanyData,
@@ -316,15 +381,26 @@ class YFinanceAdapter:
         balance: pd.DataFrame,
         cashflow: pd.DataFrame,
         fields_filled: list,
+        q_financials: Optional[pd.DataFrame] = None,
+        q_cashflow: Optional[pd.DataFrame] = None,
+        q_balance: Optional[pd.DataFrame] = None,
     ) -> None:
         """
         Parse yfinance DataFrames into AnnualFinancials objects.
         yfinance returns up to 4 years. Columns are datetime objects.
         Values are in raw units — we convert to millions.
+
+        Quarterly cross-validation: for each year, sum the 4 quarterly figures
+        for key income-statement rows. If the quarterly sum exceeds the reported
+        annual figure by >10% (common for European stocks where yfinance returns
+        a partial/stub annual period), replace the annual value with the quarterly
+        sum so the data reflects the true full fiscal year.
         """
         if financials is None or financials.empty:
             logger.debug(f"[yfinance] No annual financials available.")
             return
+
+        fiscal_month_end = self._detect_fiscal_month_end(financials)
 
         for col in financials.columns:
             try:
@@ -347,6 +423,55 @@ class YFinanceAdapter:
             if af.eps_diluted is not None:
                 af.eps_diluted = af.eps_diluted * 1_000_000  # undo /1M scaling
 
+            # ── Quarterly cross-validation for income statement ───────────────
+            # yfinance sometimes returns a stub annual period (e.g. 9-month) for
+            # non-US stocks. Summing the 4 individual quarters gives the true FY.
+            if q_financials is not None and not q_financials.empty:
+                _overrides: list[str] = []
+                for row_key, attr in [
+                    ("Total Revenue",    "revenue"),
+                    ("Gross Profit",     "gross_profit"),
+                    ("Operating Income", "ebit"),
+                    ("EBITDA",           "ebitda"),
+                    ("Net Income",       "net_income"),
+                ]:
+                    annual_val = getattr(af, attr)
+                    q_sum = self._sum_quarterly(
+                        q_financials, row_key, year, fiscal_month_end
+                    )
+                    if q_sum is not None and (
+                        annual_val is None
+                        or (annual_val > 0 and q_sum > annual_val * 1.10)
+                        or (annual_val < 0 and q_sum < annual_val * 1.10)
+                    ):
+                        setattr(af, attr, q_sum)
+                        _overrides.append(
+                            f"{attr}: {annual_val:.0f}→{q_sum:.0f}"
+                            if annual_val is not None else f"{attr}→{q_sum:.0f}"
+                        )
+                if _overrides:
+                    logger.info(
+                        f"[yfinance] {year} partial-year fix applied "
+                        f"(fiscal_end={fiscal_month_end}): {', '.join(_overrides)}"
+                    )
+
+            # Cash flow cross-validation
+            if q_cashflow is not None and not q_cashflow.empty:
+                for row_key, attr in [
+                    ("Operating Cash Flow", "operating_cash_flow"),
+                    ("Free Cash Flow",      "fcf"),
+                ]:
+                    annual_val = getattr(af, attr, None)
+                    q_sum = self._sum_quarterly(
+                        q_cashflow, row_key, year, fiscal_month_end
+                    )
+                    if q_sum is not None and (
+                        annual_val is None
+                        or (annual_val > 0 and q_sum > annual_val * 1.10)
+                        or (annual_val < 0 and q_sum < annual_val * 1.10)
+                    ):
+                        setattr(af, attr, q_sum)
+
             # Balance sheet
             if balance is not None and not balance.empty and col in balance.columns:
                 idx = balance.columns.get_loc(col)
@@ -368,11 +493,13 @@ class YFinanceAdapter:
                 if af.shares_outstanding is not None:
                     af.shares_outstanding = af.shares_outstanding * 1_000_000  # undo /1M
 
-            # Cash flow
+            # Cash flow (annual, only if not already overridden by quarterly sum above)
             if cashflow is not None and not cashflow.empty and col in cashflow.columns:
                 idx = cashflow.columns.get_loc(col)
-                af.operating_cash_flow = _df_val(cashflow, "Operating Cash Flow", idx)
-                af.fcf  = _df_val(cashflow, "Free Cash Flow", idx)
+                if af.operating_cash_flow is None:
+                    af.operating_cash_flow = _df_val(cashflow, "Operating Cash Flow", idx)
+                if af.fcf is None:
+                    af.fcf = _df_val(cashflow, "Free Cash Flow", idx)
                 capex = _df_val(cashflow, "Capital Expenditure", idx)
                 if capex is not None:
                     af.capex = abs(capex)  # yfinance reports as negative
