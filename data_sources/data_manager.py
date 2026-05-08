@@ -7,6 +7,7 @@ Call DataManager().get(ticker) and receive a fully populated CompanyData object.
 Waterfall logic (stops as soon as data is "good enough"):
   Tier 1a: yfinance         → always runs first (fast, global, free)
   Tier 1b: SEC EDGAR        → runs for US tickers only (10-year depth)
+  Tier 1b: EODHD            → runs for non-US tickers (paid; accurate EU/global fundamentals)
   Tier 2:  Alpha Vantage    → runs for non-US OR when <7 years of data remain
   Tier 4:  FMP (paid)       → runs only if critical fields still missing
 
@@ -35,12 +36,14 @@ from .yfinance_adapter import YFinanceAdapter
 from .edgar_adapter import EdgarAdapter
 from .alpha_vantage_adapter import AlphaVantageAdapter
 from .fmp_adapter import FMPAdapter
+from .eodhd_adapter import EODHDAdapter
 from .fred_adapter import FredAdapter, MacroSnapshot
 from .news_adapter import NewsAdapter
 from .worldbank_adapter import WorldBankAdapter, CountryMacro
 from config import (
     CACHE_DIR, CACHE_TTL_HOURS, HISTORICAL_YEARS,
     ENABLE_YFINANCE, ENABLE_EDGAR, ENABLE_ALPHA_VANTAGE, ENABLE_FMP, ENABLE_FRED,
+    ENABLE_EODHD,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,7 @@ class DataManager:
         self._edgar = EdgarAdapter()       if ENABLE_EDGAR         else None
         self._av    = AlphaVantageAdapter() if ENABLE_ALPHA_VANTAGE else None
         self._fmp   = FMPAdapter()         if ENABLE_FMP           else None
+        self._eodhd = EODHDAdapter()       if ENABLE_EODHD         else None
         self._fred  = FredAdapter()        if ENABLE_FRED          else None
         self._idx   = IndexAdapter()
         self._news  = NewsAdapter()
@@ -172,6 +176,20 @@ class DataManager:
                     logger.info(f"[DataManager] After EDGAR: {len(company.annual_financials)} years")
                 else:
                     logger.warning(f"[DataManager] EDGAR failed: {result.error}")
+
+        # ── Tier 1b: EODHD (non-US — high-quality European/global fundamentals) ──
+        # EODHD has accurate annual financials for all major global exchanges.
+        # Requires paid plan for fundamentals — falls back silently if on free tier.
+        if self._eodhd and not is_us_ticker:
+            logger.info(f"[DataManager] Running EODHD for non-US {ticker}…")
+            result = self._eodhd.fetch(ticker)
+            if result.success and result.data:
+                # Override yfinance annual financials with EODHD's accurate data
+                self._merge(company, result.data, prefer_source="eodhd",
+                            fields=["annual_financials"], override_financials=True)
+                logger.info(f"[DataManager] After EODHD: {len(company.annual_financials)} years")
+            else:
+                logger.info(f"[DataManager] EODHD skipped: {result.error}")
 
         # ── Tier 2: Alpha Vantage (non-US or still need more history) ─────────
         # For non-US tickers we ALWAYS run Alpha Vantage when available, because

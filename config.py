@@ -61,7 +61,7 @@ ENABLE_EDGAR          = True   # Tier 1 — US stocks only
 ENABLE_FRED           = True   # Tier 1 — macroeconomic data
 ENABLE_ALPHA_VANTAGE  = bool(ALPHA_VANTAGE_API_KEY)  # Tier 2 — needs free key
 ENABLE_FMP            = bool(FMP_API_KEY)             # Tier 4 — needs paid key
-ENABLE_EODHD          = bool(EODHD_API_KEY)           # Tier 4 — needs paid key
+ENABLE_EODHD          = bool(EODHD_API_KEY)           # Tier 1b — non-US, needs paid key
 
 # Years of historical annual data to target
 HISTORICAL_YEARS = 10
