@@ -46,6 +46,8 @@ ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 FRED_API_KEY         = os.getenv("FRED_API_KEY", "")
 FMP_API_KEY          = os.getenv("FMP_API_KEY", "")
 EODHD_API_KEY        = os.getenv("EODHD_API_KEY", "")
+SIMFIN_API_KEY       = os.getenv("SIMFIN_API_KEY",  "")
+NEWS_API_KEY         = os.getenv("NEWS_API_KEY",    "")
 
 # ── LLM Provider ─────────────────────────────────────────────────────────────
 LLM_PROVIDER     = os.getenv("LLM_PROVIDER", "claude")       # "claude" | "openai"

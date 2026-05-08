@@ -218,7 +218,7 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompt builder ─────────────────────────────────────────────────────────
 
-def _build_fisher_prompt(company: CompanyData) -> str:
+def _build_fisher_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
     fin_data = _format_financials_for_llm(company)
     cur = company.currency or "USD"
 
@@ -237,11 +237,14 @@ def _build_fisher_prompt(company: CompanyData) -> str:
     macro_block = get_macro_block()
     macro_section = f"\n\n{macro_block}" if macro_block else ""
 
+    news_section = f"\n\n{news_block}" if news_block else ""
+    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
+
     return f"""Perform a deep-dive Fisher Alternatives analysis for the company below.
 Apply Philip Fisher's 15-point framework and Hamilton Helmer's 7 Powers rigorously.
 Return a single JSON object with exactly the structure shown.
 
-{fin_data}{macro_section}
+{fin_data}{macro_section}{news_section}{country_macro_section}
 
 == FISHER 15-POINT QUESTIONS ==
 {fisher_q_block}

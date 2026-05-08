@@ -681,6 +681,33 @@ if generate_clicked and ticker_input:
                      f"sources: {', '.join(company.data_sources)}")
             _prog.progress(18, text="✓  Data loaded")
 
+            # ── Fetch news + country macro ────────────────────────────────────
+            _prog.progress(19, text="📰  Fetching recent news…")
+            _news_articles = dm.get_news(company.name or ticker_input, ticker_input, max_articles=8)
+            _news_block = dm._news.format_for_prompt(_news_articles) if _news_articles else ""
+            if _news_articles:
+                st.write(f"📰  {len(_news_articles)} recent news articles fetched")
+
+            _country_macro_block = ""
+            if company.country:
+                # Map full country name to ISO2 code
+                _COUNTRY_MAP = {
+                    "Germany": "DE", "Finland": "FI", "France": "FR", "Sweden": "SE",
+                    "Netherlands": "NL", "United Kingdom": "GB", "Italy": "IT",
+                    "Spain": "ES", "Poland": "PL", "Norway": "NO", "Denmark": "DK",
+                    "Switzerland": "CH", "Austria": "AT", "Belgium": "BE",
+                    "United States": "US", "Japan": "JP", "South Korea": "KR",
+                    "China": "CN", "India": "IN", "Brazil": "BR", "Canada": "CA",
+                    "Australia": "AU",
+                }
+                _iso2 = _COUNTRY_MAP.get(company.country, company.country[:2].upper() if company.country else "")
+                if _iso2:
+                    try:
+                        _cmacro = dm.get_country_macro(_iso2)
+                        _country_macro_block = dm._wb.format_for_prompt(_cmacro)
+                    except Exception:
+                        _country_macro_block = ""
+
             # ── Step 2: LLM ───────────────────────────────────────────────────
             adv_label = " ⚔ adversarial" if adversarial_on else ""
             _prog.progress(22, text=f"🤖  Running AI analysis — typically 30–90 s…")
@@ -700,7 +727,7 @@ if generate_clicked and ticker_input:
                     _build_overview_prompt, _calculate_checklist,
                     SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_overview_prompt(company)
+                prompt = _build_overview_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
 
                 if adversarial_on:
                     _prog.progress(25, text="⚔  Step 1/4: Claude analysis…")
@@ -765,7 +792,7 @@ if generate_clicked and ticker_input:
                     _build_fisher_prompt, _validate_analysis,
                     SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_fisher_prompt(company)
+                prompt = _build_fisher_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
 
                 if adversarial_on:
                     adv_result = _adv_engine.run(prompt, SYS, max_tokens=6000,
@@ -832,7 +859,7 @@ if generate_clicked and ticker_input:
                     _build_gravity_prompt, _validate_analysis,
                     SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_gravity_prompt(company)
+                prompt = _build_gravity_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
 
                 if adversarial_on:
                     adv_result = _adv_engine.run(prompt, SYS, max_tokens=6000,

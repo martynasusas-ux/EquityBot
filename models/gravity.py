@@ -207,7 +207,7 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompt builder ────────────────────────────────────────────────────────
 
-def _build_gravity_prompt(company: CompanyData) -> str:
+def _build_gravity_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
     fin_data = _format_financials_for_llm(company)
     cur = company.currency or "USD"
 
@@ -220,13 +220,16 @@ def _build_gravity_prompt(company: CompanyData) -> str:
     macro_block = get_macro_block()
     macro_section = f"\n\n{macro_block}" if macro_block else ""
 
+    news_section = f"\n\n{news_block}" if news_block else ""
+    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
+
     return f"""Perform a Gravity Taxers analysis for the company below.
 A "Gravity Taxer" is a business that occupies an essential choke point in a value chain
 and extracts a durable, recurring toll from economic activity flowing through it.
 Score the company on 10 structural dimensions of choke-point strength.
 Return a single JSON object with exactly the structure shown.
 
-{fin_data}{macro_section}
+{fin_data}{macro_section}{news_section}{country_macro_section}
 
 == GRAVITY DIMENSIONS TO SCORE ==
 {dims_block}

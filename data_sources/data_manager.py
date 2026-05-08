@@ -36,6 +36,8 @@ from .edgar_adapter import EdgarAdapter
 from .alpha_vantage_adapter import AlphaVantageAdapter
 from .fmp_adapter import FMPAdapter
 from .fred_adapter import FredAdapter, MacroSnapshot
+from .news_adapter import NewsAdapter
+from .worldbank_adapter import WorldBankAdapter, CountryMacro
 from config import (
     CACHE_DIR, CACHE_TTL_HOURS, HISTORICAL_YEARS,
     ENABLE_YFINANCE, ENABLE_EDGAR, ENABLE_ALPHA_VANTAGE, ENABLE_FMP, ENABLE_FRED,
@@ -70,6 +72,8 @@ class DataManager:
         self._fmp   = FMPAdapter()         if ENABLE_FMP           else None
         self._fred  = FredAdapter()        if ENABLE_FRED          else None
         self._idx   = IndexAdapter()
+        self._news  = NewsAdapter()
+        self._wb    = WorldBankAdapter()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -101,6 +105,16 @@ class DataManager:
         if self._fred:
             return self._fred.fetch(force_refresh=force_refresh)
         return MacroSnapshot()
+
+    def get_news(self, company_name: str, ticker: str, max_articles: int = 8) -> list[dict]:
+        """Fetch recent news for a company. Returns [] if unavailable."""
+        if self._news:
+            return self._news.fetch_company_news(company_name, ticker, max_articles)
+        return []
+
+    def get_country_macro(self, country_code: str) -> "CountryMacro":
+        """Fetch World Bank macro data for a country (ISO2 code e.g. 'DE')."""
+        return self._wb.fetch_country(country_code)
 
     def get_index(self, ticker: str, force_refresh: bool = False) -> IndexData:
         """Fetch index / ETF data. Always uses IndexAdapter (no company waterfall)."""

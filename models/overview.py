@@ -158,7 +158,7 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompts ───────────────────────────────────────────────────────────────
 
-def _build_overview_prompt(company: CompanyData) -> str:
+def _build_overview_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
     fin_data = _format_financials_for_llm(company)
     cur = company.currency or "USD"
 
@@ -166,10 +166,13 @@ def _build_overview_prompt(company: CompanyData) -> str:
     macro_block = get_macro_block()
     macro_section = f"\n\n{macro_block}" if macro_block else ""
 
+    news_section = f"\n\n{news_block}" if news_block else ""
+    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
+
     return f"""Produce a full Investment Memo analysis for the company below.
 Return a single JSON object with exactly these keys.
 
-{fin_data}{macro_section}
+{fin_data}{macro_section}{news_section}{country_macro_section}
 
 Required JSON output:
 {{
@@ -202,6 +205,8 @@ Rules:
 - All numbers you reference must come from the financial data provided above — do not invent figures.
 - Currency is {cur} throughout.
 - Write in English. Professional analyst tone. No bullet points inside the text fields — prose only.
+- If RECENT NEWS is provided, incorporate the most relevant developments into snapshot, bull_case, and bear_case. Do not fabricate news items.
+- If COUNTRY MACRO data is provided, use it to contextualize the operating environment in the snapshot and bear_case.
 """
 
 
