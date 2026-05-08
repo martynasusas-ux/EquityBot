@@ -160,15 +160,25 @@ class DataManager:
                     logger.warning(f"[DataManager] EDGAR failed: {result.error}")
 
         # ── Tier 2: Alpha Vantage (non-US or still need more history) ─────────
+        # For non-US tickers we ALWAYS run Alpha Vantage when available, because
+        # yfinance frequently returns partial/incorrect annual data for European
+        # stocks (e.g. 9-month stub periods labeled as full fiscal years).
+        # Alpha Vantage data then OVERRIDES the yfinance annual financials rather
+        # than just filling gaps — this is the key correction.
         if self._av and ENABLE_ALPHA_VANTAGE:
             needs_history = len(company.annual_financials) < MIN_HISTORY_YEARS
-            if needs_history:
+            run_av = needs_history or not is_us_ticker
+            if run_av:
                 logger.info(f"[DataManager] Running Alpha Vantage for {ticker} "
-                            f"(have {len(company.annual_financials)} years)…")
+                            f"({'non-US override' if not is_us_ticker else f'need history, have {len(company.annual_financials)} yrs'})…")
                 result = self._av.fetch(ticker)
                 if result.success and result.data:
+                    # For non-US: override yfinance annual financials with AV data
+                    # (AV has more reliable European annual statements)
+                    # For US with history gaps: fill-only merge as before
                     self._merge(company, result.data, prefer_source="alpha_vantage",
-                                fields=["annual_financials"])
+                                fields=["annual_financials"],
+                                override_financials=not is_us_ticker)
                     logger.info(f"[DataManager] After Alpha Vantage: "
                                 f"{len(company.annual_financials)} years")
                 else:
@@ -230,21 +240,32 @@ class DataManager:
         source: CompanyData,
         prefer_source: str,
         fields: List[str],
+        override_financials: bool = False,
     ) -> None:
         """
         Merge fields from source into target (in-place).
 
-        For annual_financials: union of years; for each year, fill in
-        any None fields from source that target is missing.
+        For annual_financials:
+          - override_financials=False (default): fill-only — copy source values
+            into target only where target currently has None.
+          - override_financials=True: for each existing year, replace ALL income
+            statement fields from source (revenue, margins, net income, etc.)
+            so that a more reliable source (e.g. Alpha Vantage for non-US stocks)
+            overwrites potentially wrong yfinance data.  Balance-sheet and
+            market-data fields that yfinance already got right are preserved.
         For scalar fields: only copy if target field is None.
         """
         if "annual_financials" in fields:
             for year, src_af in source.annual_financials.items():
                 if year not in target.annual_financials:
-                    # New year — add it wholesale
+                    # New year — add it wholesale regardless of mode
                     target.annual_financials[year] = src_af
+                elif override_financials:
+                    # Override mode: replace income-statement fields from source
+                    tgt_af = target.annual_financials[year]
+                    self._override_annual(tgt_af, src_af)
                 else:
-                    # Existing year — fill in missing fields
+                    # Fill-only mode: only populate fields that are still None
                     tgt_af = target.annual_financials[year]
                     self._merge_annual(tgt_af, src_af)
 
@@ -270,6 +291,37 @@ class DataManager:
             "roe", "roa",
         ]
         for f in fields:
+            if getattr(target, f, None) is None and getattr(source, f, None) is not None:
+                setattr(target, f, getattr(source, f))
+
+    def _override_annual(self, target: AnnualFinancials, source: AnnualFinancials) -> None:
+        """
+        Override income-statement fields in target with source values.
+        Used when a more reliable source (Alpha Vantage for non-US stocks)
+        should replace potentially wrong yfinance values.
+
+        Income statement fields are fully replaced when source has a value.
+        Balance-sheet fields that yfinance typically gets right are left in
+        fill-only mode so we don't lose good data.
+        """
+        # These fields are replaced unconditionally when source has a non-None value
+        override_fields = [
+            "revenue", "gross_profit", "ebitda", "ebit", "net_income",
+            "eps_diluted", "dividends_per_share",
+            "gross_margin", "ebit_margin", "ebitda_margin", "net_margin",
+            "operating_cash_flow", "capex", "fcf",
+        ]
+        for f in override_fields:
+            src_val = getattr(source, f, None)
+            if src_val is not None:
+                setattr(target, f, src_val)
+
+        # Balance sheet / per-share fields: fill-only (yfinance usually has these)
+        fill_fields = [
+            "total_assets", "total_debt", "cash", "net_debt", "total_equity",
+            "shares_outstanding", "roe", "roa",
+        ]
+        for f in fill_fields:
             if getattr(target, f, None) is None and getattr(source, f, None) is not None:
                 setattr(target, f, getattr(source, f))
 

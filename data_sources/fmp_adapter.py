@@ -30,7 +30,7 @@ from config import FMP_API_KEY, REQUEST_HEADERS
 
 logger = logging.getLogger(__name__)
 
-FMP_BASE = "https://financialmodelingprep.com/api/v3"
+FMP_BASE = "https://financialmodelingprep.com/stable"
 FMP_DELAY = 0.5  # seconds between calls
 
 
