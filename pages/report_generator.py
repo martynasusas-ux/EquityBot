@@ -130,6 +130,113 @@ EXCHANGE_HINTS = {
 }
 
 
+# ── Natural-language intent parser ────────────────────────────────────────────
+
+def _parse_intent_regex(q: str) -> dict:
+    """Fast regex-only fallback: extract ticker, framework and mode."""
+    import re
+    q_up = q.upper()
+    q_lo = q.lower()
+    result: dict = {"ticker": None, "framework_id": None,
+                    "mode": "equity", "force_refresh": False}
+
+    # Ticker: index (^OMXH25) > suffix (NOKIA.HE) > bare caps
+    m = re.search(r"\^[A-Z0-9]+", q_up)
+    if m:
+        result["ticker"] = m.group()
+    else:
+        m = re.search(r"\b([A-Z]{1,6}\.[A-Z]{1,3})\b", q_up)
+        if m:
+            result["ticker"] = m.group(1)
+
+    # Framework keywords
+    fw_hints = {
+        "gravity":  ["gravity", "taxer", "choke", "toll"],
+        "fisher":   ["fisher", "scuttlebutt", "philip fisher"],
+        "overview": ["overview", "helmer", "7 power", "seven power"],
+    }
+    for fw_id, kws in fw_hints.items():
+        if any(k in q_lo for k in kws):
+            result["framework_id"] = fw_id
+            break
+
+    # Mode
+    if result["ticker"] and result["ticker"].startswith("^"):
+        screen_kws = ["screen", "constituent", "compan", "stock", "member",
+                      "all ", "each ", "list of", "run "]
+        result["mode"] = (
+            "universe_screen"
+            if any(k in q_lo for k in screen_kws)
+            else "index_overview"
+        )
+
+    # Force refresh
+    if any(k in q_lo for k in ["careful", "fresh data", "re-fetch",
+                                "refetch", "new data"]):
+        result["force_refresh"] = True
+
+    return result
+
+
+def _parse_intent(query: str) -> dict:
+    """
+    Parse a free-text query into structured intent via regex + LLM fallback.
+    Returns dict: {ticker, framework_id, mode, force_refresh}.
+    Returns {} if the input looks like a plain ticker symbol (no whitespace).
+    """
+    import re
+    q = query.strip()
+    if not q or not re.search(r"\s", q):
+        return {}   # plain ticker — nothing to parse
+
+    # Regex pass
+    intent = _parse_intent_regex(q)
+
+    # Enough info from regex alone?
+    if intent.get("ticker") and intent.get("framework_id"):
+        return intent
+
+    # LLM pass for ambiguous queries
+    fw_list = "\n".join(
+        f"  {k}: {REPORT_TYPES[k]['short']}" for k in REPORT_TYPES
+    )
+    system = (
+        "You extract structured financial analysis intent from natural language. "
+        "Reply with valid JSON only — no markdown, no explanation."
+    )
+    prompt = (
+        f'Query: "{q}"\n\n'
+        f'Available frameworks:\n{fw_list}\n\n'
+        'Return JSON:\n'
+        '{\n'
+        '  "ticker": "<Yahoo Finance ticker or null>",\n'
+        '  "framework_id": "<exact framework id from list or null>",\n'
+        '  "mode": "<equity|index_overview|universe_screen>",\n'
+        '  "force_refresh": <true|false>\n'
+        '}\n\n'
+        'Rules:\n'
+        '- Index ticker + analyse/screen its companies → mode=universe_screen\n'
+        '- Index overview/performance/composition only → mode=index_overview\n'
+        '- Single stock analysis → mode=equity\n'
+        '- "carefully", "fresh data", "re-fetch" → force_refresh=true\n'
+        '- framework_id must exactly match one of the ids listed'
+    )
+    try:
+        llm = LLMClient()
+        if not llm.check_configured()[0]:
+            return intent
+        result = llm.generate_json(prompt, system, max_tokens=200)
+        # Merge: LLM wins, fill gaps with regex
+        for k in ("ticker", "framework_id", "mode", "force_refresh"):
+            if not result.get(k):
+                result[k] = intent.get(k)
+        if result.get("framework_id") not in REPORT_TYPES:
+            result["framework_id"] = intent.get("framework_id")
+        return result
+    except Exception:
+        return intent
+
+
 # ── Session state ─────────────────────────────────────────────────────────────
 if "report_result" not in st.session_state:
     st.session_state.report_result = None   # {pdf_path, company, analysis, report_type}
@@ -210,19 +317,24 @@ st.divider()
 col_left, col_right = st.columns([1.4, 1], gap="large")
 
 with col_left:
-    st.markdown("#### Ticker")
+    st.markdown("#### Ticker  *or describe what to analyse*")
     ticker_input = st.text_input(
-        "Yahoo Finance ticker",
-        placeholder="e.g.  WKL.AS  ·  AAPL  ·  V  ·  MCO  ·  NOKIA.HE",
+        "Ticker or natural language query",
+        placeholder=(
+            "e.g.  NOKIA.HE  ·  ^OMXH25  ·  "
+            "'Run Gravity model for OMX Helsinki 25 constituents, no market cap constraint'"
+        ),
         label_visibility="collapsed",
         key="ticker_input",
-    ).strip().upper()
+    ).strip()
 
-    # Live ticker suggestions — fires when the input looks like a company name
+    # Live ticker suggestions — fires when the input looks like a single company name
     _raw_input = st.session_state.get("ticker_input", "").strip()
+    _is_nl_query = " " in _raw_input and len(_raw_input) > 8
     _looks_like_name = (
         _raw_input
         and len(_raw_input) > 4
+        and not _is_nl_query                          # exclude NL phrases
         and _raw_input.replace(" ", "").isalpha()
         and "." not in _raw_input
         and not _raw_input.startswith("^")
@@ -237,10 +349,17 @@ with col_left:
                     _lbl += f"  ·  {_s['exchange']}"
                 st.caption(_lbl)
 
+    # Normalise for display-time checks (full upper only for plain tickers)
+    ticker_input = ticker_input.upper() if not _is_nl_query else ticker_input
+
     # ── Index / ETF detection ─────────────────────────────────────────────────
     # Quick heuristic: ^ prefix = definitely an index.
-    # ETF detection happens at generation time via yfinance.
-    _is_index_ticker = ticker_input.startswith("^")
+    # For NL queries, check if a ^ ticker is embedded in the text.
+    import re as _re_idx
+    _is_index_ticker = (
+        ticker_input.startswith("^")
+        or bool(_re_idx.search(r"\^[A-Z0-9]+", ticker_input.upper()))
+    )
 
     if _is_index_ticker:
         st.info(
@@ -337,12 +456,14 @@ with col_right:
         _btn_label,
         type="primary",
         use_container_width=True,
-        disabled=not ticker_input or not ok,
+        disabled=not ticker_input.strip() or not ok,
     )
     if not ok:
         st.caption("⚠ Add your API key to .env to enable report generation.")
-    if not ticker_input:
-        st.caption("Enter a ticker above to get started.")
+    if not ticker_input.strip():
+        st.caption("Enter a ticker or describe what to analyse above.")
+    elif _is_nl_query:
+        st.caption("💡 Natural language detected — click Generate to interpret and run.")
 
 st.divider()
 
@@ -351,6 +472,53 @@ st.divider()
 if generate_clicked and ticker_input:
     st.session_state.report_result = None
     st.session_state.error_msg = None
+
+    # ── Natural-language interpretation ───────────────────────────────────────
+    _orig_query   = ticker_input
+    _nl_intent: dict = {}
+
+    if " " in _orig_query:          # has spaces → treat as NL
+        with st.spinner("🔍 Interpreting query…"):
+            _nl_intent = _parse_intent(_orig_query)
+
+    # Compute effective values (parsed wins over form defaults)
+    _eff_ticker  = (_nl_intent.get("ticker") or _orig_query).strip().upper()
+    _eff_fw      = (
+        _nl_intent["framework_id"]
+        if _nl_intent.get("framework_id") in REPORT_TYPES
+        else report_type
+    )
+    _eff_refresh = force_refresh or bool(_nl_intent.get("force_refresh"))
+
+    # Mode: parsed intent > form radio > auto-detect from ticker
+    _parsed_mode = _nl_intent.get("mode") if _nl_intent else None
+    if _parsed_mode:
+        _eff_mode = _parsed_mode if _eff_ticker.startswith("^") else None
+    elif _eff_ticker.startswith("^"):
+        _eff_mode = index_mode or "universe_screen"
+    else:
+        _eff_mode = None
+
+    # Shadow outer variables — all downstream code uses these
+    ticker_input  = _eff_ticker
+    report_type   = _eff_fw
+    index_mode    = _eff_mode
+    force_refresh = _eff_refresh
+    rt            = REPORT_TYPES[report_type]
+
+    # Show interpretation summary when NL was used
+    if _nl_intent and _nl_intent.get("ticker"):
+        _mode_lbl = {
+            "equity":          "single equity",
+            "index_overview":  "index overview",
+            "universe_screen": "screen all constituents",
+        }.get(_eff_mode or "equity", _eff_mode or "equity")
+        st.info(
+            f"🔍 **Interpreted as:** `{_eff_ticker}`  ·  "
+            f"**{rt['short']}**  ·  {_mode_lbl}"
+            + ("  ·  🔄 force refresh" if _eff_refresh and not force_refresh else ""),
+            icon="✅",
+        )
 
     peer_list = [t.strip().upper() for t in peers_input.split() if t.strip()][:6]
 
