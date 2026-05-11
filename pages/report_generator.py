@@ -285,15 +285,85 @@ with st.sidebar:
             )
         st.divider()
 
-    # About
-    st.markdown("**About Humble EquityBot**")
-    st.markdown("""
-**Data sources**
-- yfinance (prices, financials — free)
-- SEC EDGAR XBRL (US, 10+ years — free)
-- Alpha Vantage (global, 20 years — free tier)
-- FRED / St. Louis Fed (macro: rates, inflation, spreads — free)
+    # ── Data waterfall ────────────────────────────────────────────────────
+    with st.expander("📡 Data Sources & Waterfall", expanded=True):
+        st.markdown("""
+<style>
+.wf-tier   { font-size:11px; font-weight:700; color:#888; letter-spacing:.06em;
+             text-transform:uppercase; margin:10px 0 2px 0; }
+.wf-row    { display:flex; align-items:flex-start; gap:7px; margin:3px 0; }
+.wf-badge  { flex-shrink:0; font-size:10px; font-weight:700; padding:1px 6px;
+             border-radius:3px; margin-top:1px; }
+.wf-paid   { background:#1B3F6E; color:#fff; }
+.wf-free   { background:#D6E8F7; color:#1B3F6E; }
+.wf-ctx    { background:#EEF5FB; color:#555; }
+.wf-body   { font-size:12px; line-height:1.4; color:#333; }
+.wf-body b { color:#111; }
+.wf-arrow  { color:#BBCCDD; font-size:13px; margin:1px 0 1px 10px; }
+.wf-miss   { font-size:11px; color:#888; margin:4px 0 0 0; }
+</style>
 
+<div class="wf-tier">① Always — market skeleton</div>
+<div class="wf-row">
+  <span class="wf-badge wf-free">FREE</span>
+  <div class="wf-body"><b>yfinance</b><br>Current price · shares · live ratios</div>
+</div>
+
+<div class="wf-arrow">↓</div>
+
+<div class="wf-tier">② Primary fundamentals — all markets</div>
+<div class="wf-row">
+  <span class="wf-badge wf-paid">PAID</span>
+  <div class="wf-body"><b>EODHD</b> Fundamentals Feed<br>
+  Overrides annual income · balance sheet · cash flow<br>
+  65+ exchanges · 20–40 yr history</div>
+</div>
+
+<div class="wf-arrow">↓</div>
+
+<div class="wf-tier">③ US depth — fill-only after EODHD</div>
+<div class="wf-row">
+  <span class="wf-badge wf-free">FREE</span>
+  <div class="wf-body"><b>SEC EDGAR</b><br>US only · direct SEC filings</div>
+</div>
+
+<div class="wf-arrow">↓</div>
+
+<div class="wf-tier">④ Last resort — if EODHD unavailable</div>
+<div class="wf-row">
+  <span class="wf-badge wf-free">FREE</span>
+  <div class="wf-body"><b>Alpha Vantage</b><br>25 calls/day · non-US only</div>
+</div>
+
+<hr style="margin:10px 0; border-color:#EEE;">
+
+<div class="wf-tier">Context — injected into every report</div>
+<div class="wf-row">
+  <span class="wf-badge wf-ctx">FREE</span>
+  <div class="wf-body"><b>FRED</b> — rates · CPI · credit spreads</div>
+</div>
+<div class="wf-row">
+  <span class="wf-badge wf-ctx">FREE</span>
+  <div class="wf-body"><b>NewsAPI</b> — 8 recent headlines</div>
+</div>
+<div class="wf-row">
+  <span class="wf-badge wf-ctx">FREE</span>
+  <div class="wf-body"><b>World Bank</b> — GDP · inflation · debt</div>
+</div>
+
+<hr style="margin:10px 0; border-color:#EEE;">
+
+<div class="wf-tier">EODHD global coverage</div>
+<div class="wf-body" style="font-size:11px; line-height:1.6;">
+✅ US · EU · Korea · Taiwan · China<br>
+✅ HK · Brazil · Canada · SE Asia · Africa<br>
+⚠️ Japan · India · Singapore → yfinance only
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Frameworks & LLM ──────────────────────────────────────────────────
+    with st.expander("🔍 Frameworks & AI", expanded=False):
+        st.markdown("""
 **Frameworks**
 - Philip Fisher (Common Stocks, 1958)
 - Hamilton Helmer (7 Powers, 2016)
@@ -302,7 +372,7 @@ with st.sidebar:
 **LLM providers**
 - Anthropic Claude (primary)
 - OpenAI GPT-4o (fallback / adversarial)
-    """)
+""")
 
 
 # ── Main area ─────────────────────────────────────────────────────────────────
