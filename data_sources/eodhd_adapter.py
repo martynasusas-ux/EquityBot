@@ -543,6 +543,15 @@ class EODHDAdapter:
                     b.get("totalStockholderEquity")
                     or b.get("totalEquity")
                 )
+                # Net debt: read EODHD's pre-computed field first — it uses the
+                # same definition as management reporting (total financial debt
+                # minus all liquid financial assets, including short-term deposits
+                # and money-market funds beyond just narrow cash equivalents).
+                # Fall back to total_debt - cash derivation only when absent.
+                nd_direct = self._parse_float(b.get("netDebt"))
+                if nd_direct is not None:
+                    af.net_debt = self._to_m(b.get("netDebt"))
+
                 # Debt: EODHD uses several field names depending on company/period.
                 # shortLongTermDebtTotal  = total of short + long term (best)
                 # shortLongTermDebt       = usually just current portion
