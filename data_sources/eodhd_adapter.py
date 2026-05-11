@@ -34,29 +34,71 @@ logger = logging.getLogger(__name__)
 EODHD_BASE = "https://eodhistoricaldata.com/api"
 EODHD_DELAY = 0.5  # seconds between calls
 
-# Yahoo Finance exchange suffix → EODHD exchange suffix
+# Yahoo Finance exchange suffix → EODHD exchange code
+#
+# EODHD Fundamentals Data Feed covers 73 exchanges worldwide.
+# Exchanges confirmed NOT covered by EODHD (will 404 → graceful fallback):
+#   Japan (.T → TSE), India (.NS → NSE, .BO → BSE), Singapore (.SI → SGX)
+#
 _YF_TO_EODHD = {
-    ".DE": ".XETRA",   # Germany (Xetra)
-    ".F":  ".F",       # Frankfurt (alternative)
-    ".L":  ".LSE",     # London
-    ".PA": ".PA",      # Paris (Euronext)
-    ".AS": ".AS",      # Amsterdam (Euronext)
-    ".BR": ".BR",      # Brussels
-    ".MI": ".MI",      # Milan
-    ".MC": ".MC",      # Madrid
-    ".HE": ".HE",      # Helsinki
-    ".ST": ".ST",      # Stockholm
-    ".OL": ".OL",      # Oslo
-    ".CO": ".CO",      # Copenhagen
-    ".VX": ".VX",      # Swiss Exchange
-    ".VI": ".VI",      # Vienna
-    ".WA": ".WA",      # Warsaw
-    ".LS": ".LS",      # Lisbon
-    ".AT": ".AT",      # Athens
-    ".KS": ".KS",      # South Korea
-    ".T":  ".TSE",     # Tokyo
-    ".HK": ".HK",      # Hong Kong
-    ".AX": ".AU",      # Australia (ASX)
+    # ── Europe ────────────────────────────────────────────────────────────────
+    ".DE": ".XETRA",   # Germany — Xetra (primary, highest liquidity)
+    ".F":  ".F",       # Germany — Frankfurt alternative listing
+    ".BE": ".BE",      # Germany — Berlin
+    ".MU": ".MU",      # Germany — Munich
+    ".L":  ".LSE",     # UK — London Stock Exchange
+    ".PA": ".PA",      # France — Euronext Paris
+    ".AS": ".AS",      # Netherlands — Euronext Amsterdam
+    ".BR": ".BR",      # Belgium — Euronext Brussels
+    ".MI": ".MI",      # Italy — Borsa Italiana Milan
+    ".MC": ".MC",      # Spain — BME Madrid
+    ".HE": ".HE",      # Finland — Nasdaq Helsinki
+    ".ST": ".ST",      # Sweden — Nasdaq Stockholm
+    ".OL": ".OL",      # Norway — Oslo Børs
+    ".CO": ".CO",      # Denmark — Nasdaq Copenhagen
+    ".SW": ".SW",      # Switzerland — SIX Swiss Exchange
+    ".VX": ".SW",      # Switzerland — older Yahoo suffix, maps to EODHD .SW
+    ".VI": ".VI",      # Austria — Vienna Exchange
+    ".WA": ".WAR",     # Poland — Warsaw Stock Exchange (EODHD code: WAR)
+    ".LS": ".LS",      # Portugal — Euronext Lisbon
+    ".AT": ".AT",      # Greece — Athens Exchange
+    ".IR": ".IR",      # Ireland — Irish Stock Exchange
+    ".TA": ".TA",      # Israel — Tel Aviv Stock Exchange
+    ".PR": ".PR",      # Czech Republic — Prague Stock Exchange
+    ".BU": ".BUD",     # Hungary — Budapest Stock Exchange
+
+    # ── Americas ──────────────────────────────────────────────────────────────
+    ".TO": ".TO",      # Canada — Toronto Stock Exchange (TSX)
+    ".V":  ".V",       # Canada — TSX Venture Exchange
+    ".SA": ".SA",      # Brazil — Sao Paulo (B3)
+    ".MX": ".MX",      # Mexico — Mexican Stock Exchange
+    ".SN": ".SN",      # Chile — Santiago Stock Exchange
+    ".BA": ".BA",      # Argentina — Buenos Aires Exchange
+
+    # ── Asia-Pacific (EODHD coverage) ─────────────────────────────────────────
+    ".HK": ".HK",      # Hong Kong — HKEX (confirmed working)
+    ".TW": ".TW",      # Taiwan — Taiwan Stock Exchange
+    ".TWO":".TWO",     # Taiwan — Taiwan OTC Exchange
+    ".KS": ".KO",      # South Korea — KOSPI (Yahoo .KS → EODHD .KO)
+    ".KQ": ".KQ",      # South Korea — KOSDAQ
+    ".SS": ".SHG",     # China — Shanghai Stock Exchange (Yahoo .SS → EODHD .SHG)
+    ".SZ": ".SHE",     # China — Shenzhen Stock Exchange (Yahoo .SZ → EODHD .SHE)
+    ".AX": ".AU",      # Australia — ASX (Yahoo .AX → EODHD .AU)
+    ".BK": ".BK",      # Thailand — Stock Exchange of Thailand
+    ".JK": ".JK",      # Indonesia — Jakarta Exchange
+    ".KL": ".KLSE",    # Malaysia — Kuala Lumpur Exchange
+    ".VN": ".VN",      # Vietnam — Ho Chi Minh Stock Exchange
+    ".PSE":".PSE",     # Philippines — Philippine Stock Exchange
+
+    # ── Africa / Middle East ──────────────────────────────────────────────────
+    ".JO": ".JSE",     # South Africa — Johannesburg Stock Exchange
+    ".CA": ".CA",      # Egypt — Egyptian Exchange
+
+    # NOT COVERED by EODHD — these will 404 and fall back to yfinance/AV:
+    # ".T"  → Japan (TSE) — not in EODHD exchange list
+    # ".NS" → India NSE   — not in EODHD exchange list
+    # ".BO" → India BSE   — not in EODHD exchange list
+    # ".SI" → Singapore SGX — not in EODHD exchange list
 }
 
 
@@ -85,11 +127,18 @@ class EODHDAdapter:
         Convert Yahoo Finance ticker format to EODHD format.
 
         Examples:
-            RHM.DE   → RHM.XETRA
-            NOKIA.HE → NOKIA.HE
-            AAPL     → AAPL.US
-            BA.L     → BA.LSE
-            SAP.DE   → SAP.XETRA
+            RHM.DE      → RHM.XETRA     (Germany Xetra)
+            NOKIA.HE    → NOKIA.HE      (Helsinki, same code)
+            AAPL        → AAPL.US       (US stock, no suffix)
+            BA.L        → BA.LSE        (London)
+            SAP.DE      → SAP.XETRA     (Germany Xetra)
+            005930.KS   → 005930.KO     (Korea KOSPI)
+            2330.TW     → 2330.TW       (Taiwan, same code)
+            600519.SS   → 600519.SHG    (China Shanghai)
+            700.HK      → 700.HK        (Hong Kong, same code)
+
+        Note: Japan (.T), India (.NS/.BO), Singapore (.SI) are NOT covered
+        by EODHD and will return 404 — the adapter handles this gracefully.
         """
         dot_pos = yf_ticker.rfind(".")
         if dot_pos == -1:
@@ -100,10 +149,21 @@ class EODHDAdapter:
         base   = yf_ticker[:dot_pos]          # e.g. "RHM"
 
         eodhd_suffix = _YF_TO_EODHD.get(suffix)
-        if eodhd_suffix:
-            return f"{base}{eodhd_suffix}"
-        # Suffix not in mapping — might already be EODHD format, keep as-is
-        return yf_ticker
+        if not eodhd_suffix:
+            # Suffix not in mapping — might already be EODHD format, keep as-is
+            return yf_ticker
+
+        # ── Exchange-specific code normalisation ──────────────────────────────
+        # Hong Kong: HKEX codes are officially 4-5 digits; EODHD requires the
+        # leading zeros (e.g. 700 → 0700, 5 → 0005).
+        if eodhd_suffix == ".HK" and base.isdigit():
+            base = base.zfill(4)
+
+        # Korea KRX: codes are 6 digits (e.g. 5930 → 005930).
+        if eodhd_suffix in (".KO", ".KQ") and base.isdigit():
+            base = base.zfill(6)
+
+        return f"{base}{eodhd_suffix}"
 
     def fetch(self, ticker: str) -> DataSourceResult:
         """
@@ -132,7 +192,6 @@ class EODHDAdapter:
             params = {"api_token": self.api_key, "fmt": "json"}
             resp   = requests.get(url, params=params, headers=REQUEST_HEADERS, timeout=30)
 
-            # Free-tier accounts get HTTP 403 on /fundamentals
             if resp.status_code == 403:
                 return DataSourceResult(
                     success=False,
@@ -144,11 +203,22 @@ class EODHDAdapter:
                     duration_seconds=time.time() - start,
                 )
 
+            if resp.status_code == 404:
+                # Exchange not covered by EODHD (Japan, India, Singapore, etc.)
+                return DataSourceResult(
+                    success=False,
+                    source_name=self.SOURCE_NAME,
+                    error=f"EODHD: ticker '{eodhd_ticker}' not found (exchange may not be covered).",
+                    duration_seconds=time.time() - start,
+                )
+
             resp.raise_for_status()
             raw = resp.json()
 
         except requests.RequestException as e:
-            logger.error(f"[eodhd] Request failed for {eodhd_ticker}: {e}")
+            # Only log as error for unexpected failures (not 404 — those are
+            # handled above and just mean the exchange isn't covered)
+            logger.warning(f"[eodhd] Request failed for {eodhd_ticker}: {e}")
             return DataSourceResult(
                 success=False,
                 source_name=self.SOURCE_NAME,

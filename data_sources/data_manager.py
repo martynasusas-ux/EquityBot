@@ -5,19 +5,18 @@ This is the single entry point for all data fetching.
 Call DataManager().get(ticker) and receive a fully populated CompanyData object.
 
 Waterfall logic:
-  Tier 1a: yfinance         → always runs first (price, ratios, market data skeleton)
-  Tier 1b: SEC EDGAR        → US tickers only (10-year depth from SEC filings)
-  Tier 1b: EODHD            → non-US tickers (paid Fundamentals Feed; overrides yfinance
-                               annual data + balance sheet + EV ratios)
-  Tier 2:  Alpha Vantage    → fill-only if EODHD succeeded; override if EODHD failed;
-                               always runs for history gaps (<7 years)
+  Tier 1a: yfinance         → always runs first (current price, shares, market data skeleton)
+  Tier 1b: EODHD            → ALL tickers (paid Fundamentals Feed, 70k+ companies worldwide;
+                               overrides yfinance annual income + balance + cash flow)
+  Tier 1c: SEC EDGAR        → US tickers only, fill-only after EODHD (authoritative SEC depth)
+  Tier 2:  Alpha Vantage    → fill-only if EODHD succeeded; override if EODHD failed
   Tier 4:  FMP (paid)       → runs only if critical fields still missing after Tiers 1-2
 
 Merge strategy:
-  - yfinance provides the market data skeleton (current price, shares, basic ratios)
-  - EODHD overrides ALL annual statement fields (income + balance + cash flow) for non-US
-  - EDGAR fills 10-year US history
-  - Alpha Vantage fills remaining gaps (fill-only when EODHD ran, override otherwise)
+  - yfinance provides the market data skeleton (current price, shares, real-time ratios)
+  - EODHD overrides ALL annual statement fields for every ticker (global paid data)
+  - EDGAR adds/fills any US history gaps not covered by EODHD
+  - Alpha Vantage fills remaining gaps (fill-only when EODHD ran, override as last resort)
   - FMP fills any remaining critical gaps
   - Calculated fields are derived last, after all sources are merged
 
@@ -166,34 +165,20 @@ class DataManager:
                 as_of_date=datetime.utcnow().strftime("%Y-%m-%d"),
             )
 
-        # ── Tier 1b: SEC EDGAR (US tickers only) ─────────────────────────────
         is_us_ticker = _is_us_ticker(ticker)
 
-        if self._edgar and ENABLE_EDGAR and is_us_ticker:
-            if len(company.annual_financials) < MIN_HISTORY_YEARS:
-                logger.info(f"[DataManager] Running EDGAR for {ticker} "
-                            f"(have {len(company.annual_financials)} years, need {MIN_HISTORY_YEARS})…")
-                result = self._edgar.fetch(ticker)
-                if result.success and result.data:
-                    self._merge(company, result.data, prefer_source="edgar",
-                                fields=["annual_financials", "name", "cik"])
-                    logger.info(f"[DataManager] After EDGAR: {len(company.annual_financials)} years")
-                else:
-                    logger.warning(f"[DataManager] EDGAR failed: {result.error}")
-
-        # ── Tier 1b: EODHD (non-US — high-quality paid fundamentals) ────────────
-        # EODHD Fundamentals Data Feed provides accurate annual financials for all
-        # major global exchanges with 30+ years of history.
-        # When EODHD succeeds it becomes the definitive source for annual data —
-        # Alpha Vantage will only fill any remaining gaps (not override).
+        # ── Tier 1b: EODHD — primary source for ALL tickers ──────────────────
+        # The paid Fundamentals Data Feed covers 70,000+ companies worldwide:
+        # US, EU, Asia, LatAm, Middle East — all in one consistent dataset.
+        # Runs first (after yfinance skeleton) for every ticker and overrides
+        # yfinance's annual data across all statement types.
+        # Alpha Vantage / EDGAR are then fallbacks / depth-fillers only.
         eodhd_succeeded = False
-        if self._eodhd and not is_us_ticker:
-            logger.info(f"[DataManager] Running EODHD for non-US {ticker}…")
+        if self._eodhd:
+            logger.info(f"[DataManager] Running EODHD for {ticker}…")
             result = self._eodhd.fetch(ticker)
             if result.success and result.data:
                 eodhd_succeeded = True
-                # Override yfinance annual financials + fill new scalar fields
-                # (forward_pe, ev_sales, ev_ebitda, price_to_book, roa, margins)
                 self._merge(
                     company, result.data, prefer_source="eodhd",
                     fields=[
@@ -204,7 +189,7 @@ class DataManager:
                         "eps_estimate_next_year",
                     ],
                     override_financials=True,
-                    full_override=True,   # EODHD paid data: trust all statement types
+                    full_override=True,  # EODHD paid: trust all statement types
                 )
                 logger.info(
                     f"[DataManager] After EODHD: "
@@ -212,22 +197,40 @@ class DataManager:
                     f"{company.completeness_pct()}% complete"
                 )
             else:
-                logger.info(f"[DataManager] EODHD skipped: {result.error}")
+                logger.info(f"[DataManager] EODHD unavailable for {ticker}: {result.error}")
 
-        # ── Tier 2: Alpha Vantage (non-US or still need more history) ─────────
-        # Priority rules:
-        #   • EODHD succeeded → AV runs fill-only (don't overwrite EODHD's data)
-        #   • EODHD failed    → AV overrides yfinance (old fallback behaviour)
-        #   • US ticker       → AV fills history gaps only
+        # ── Tier 1c: SEC EDGAR (US tickers — fill-only after EODHD) ──────────
+        # EDGAR provides direct-from-SEC filings for US companies.
+        # Runs in fill-only mode so it adds depth / fills any EODHD gaps
+        # without overwriting EODHD data.  Skipped when EODHD already gave
+        # sufficient history (≥ MIN_HISTORY_YEARS).
+        if self._edgar and ENABLE_EDGAR and is_us_ticker:
+            if len(company.annual_financials) < MIN_HISTORY_YEARS:
+                logger.info(
+                    f"[DataManager] Running EDGAR for US {ticker} "
+                    f"(have {len(company.annual_financials)} years, need {MIN_HISTORY_YEARS})…"
+                )
+                result = self._edgar.fetch(ticker)
+                if result.success and result.data:
+                    self._merge(company, result.data, prefer_source="edgar",
+                                fields=["annual_financials", "name", "cik"])
+                    logger.info(f"[DataManager] After EDGAR: {len(company.annual_financials)} years")
+                else:
+                    logger.warning(f"[DataManager] EDGAR failed: {result.error}")
+
+        # ── Tier 2: Alpha Vantage (fill gaps or override when EODHD failed) ──
+        # When EODHD succeeded → fill-only (don't overwrite accurate paid data)
+        # When EODHD failed    → override yfinance stubs for non-US tickers
+        # Skipped entirely when EODHD provided sufficient history
         if self._av and ENABLE_ALPHA_VANTAGE:
             needs_history = len(company.annual_financials) < MIN_HISTORY_YEARS
-            run_av = needs_history or not is_us_ticker
+            # Run AV if we still need history OR if EODHD failed for non-US
+            run_av = needs_history or (not eodhd_succeeded and not is_us_ticker)
             if run_av:
-                # Only override yfinance if we're non-US AND EODHD didn't save us
-                av_override = not is_us_ticker and not eodhd_succeeded
+                av_override = not eodhd_succeeded and not is_us_ticker
                 logger.info(
                     f"[DataManager] Running Alpha Vantage for {ticker} "
-                    f"({'fill-only' if not av_override else 'non-US override'}, "
+                    f"({'override fallback' if av_override else 'fill-only'}, "
                     f"have {len(company.annual_financials)} years)…"
                 )
                 result = self._av.fetch(ticker)
