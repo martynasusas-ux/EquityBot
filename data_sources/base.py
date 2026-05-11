@@ -108,6 +108,14 @@ class AnnualFinancials:
                 self.pe_ratio = self.price_year_end / self.eps_diluted
 
         # EV/EBIT and EV/Sales  (need enterprise_value populated first)
+        # Recompute enterprise_value from market_cap + net_debt if missing
+        # (yfinance sets market_cap from year-end price; EODHD resets enterprise_value to None)
+        if self.enterprise_value is None and self.market_cap is not None:
+            nd = self.net_debt
+            if nd is None and self.total_debt is not None and self.cash is not None:
+                nd = self.total_debt - self.cash
+            self.enterprise_value = self.market_cap + (nd or 0)
+
         ev = self.enterprise_value
         if ev is not None and ev > 0:
             if self.ev_ebit is None and self.ebit and self.ebit > 0:

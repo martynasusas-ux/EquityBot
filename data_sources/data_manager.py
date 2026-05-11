@@ -201,7 +201,9 @@ class DataManager:
                         "dividend_yield",
                         # Valuation multiples — EODHD is primary source
                         "pe_ratio", "forward_pe", "price_to_book", "price_to_sales",
-                        "peg_ratio", "ev_sales", "ev_ebitda",
+                        "peg_ratio", "ev_sales", "ev_ebitda", "enterprise_value",
+                        # Forward analyst estimates
+                        "forward_estimates",
                         # Per-share & TTM metrics
                         "book_value_per_share", "revenue_per_share", "eps_ttm",
                         # Profitability / growth
@@ -230,9 +232,12 @@ class DataManager:
         # enterprise_value and net_debt are also reset so EV recalculates from
         # yfinance market_cap (live) + EODHD net_debt (accurate balance sheet).
         if eodhd_succeeded:
+            # enterprise_value, ev_ebitda, ev_sales are now provided directly by EODHD
+            # (Valuation.EnterpriseValue / EnterpriseValueEbitda / EnterpriseValueRevenue)
+            # so we do NOT reset them. ev_ebit still needs recomputation (no direct field).
             for _f in [
-                "enterprise_value", "net_debt",
-                "ev_ebit", "ev_ebitda", "ev_sales",
+                "net_debt",
+                "ev_ebit",
                 "fcf_yield", "gearing",
                 "net_margin", "ebit_margin", "ebitda_margin", "gross_margin",
                 "roe", "roa",

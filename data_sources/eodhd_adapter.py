@@ -26,7 +26,7 @@ from typing import Optional
 
 import requests
 
-from .base import CompanyData, AnnualFinancials, DataSourceResult
+from .base import CompanyData, AnnualFinancials, ForwardEstimates, DataSourceResult
 from config import EODHD_API_KEY, REQUEST_HEADERS
 
 logger = logging.getLogger(__name__)
@@ -335,7 +335,10 @@ class EODHDAdapter:
             valuation.get("EnterpriseValueEbitda") or valuation.get("EVEbitda")
         )
 
-        for f in ["forward_pe", "price_to_book", "ev_sales", "ev_ebitda"]:
+        # Current enterprise value (absolute, in millions)
+        company.enterprise_value = self._to_m(valuation.get("EnterpriseValue"))
+
+        for f in ["forward_pe", "price_to_book", "ev_sales", "ev_ebitda", "enterprise_value"]:
             if getattr(company, f) is not None:
                 fields_filled.append(f)
 
@@ -414,6 +417,15 @@ class EODHDAdapter:
             self._parse_annual_history(company, financials_block, fields_filled)
         except Exception as e:
             logger.warning(f"[eodhd] Could not parse annual financials for {ticker}: {e}")
+
+        # ── Forward Estimates (Earnings.Trend) ────────────────────────────────
+        try:
+            fe = self._parse_forward_estimates(raw)
+            if fe is not None:
+                company.forward_estimates = fe
+                fields_filled.append("forward_estimates")
+        except Exception as e:
+            logger.warning(f"[eodhd] Could not parse forward estimates for {ticker}: {e}")
 
         # ── Derived Calculations ──────────────────────────────────────────────
         company.calculate_current_ratios()
@@ -556,6 +568,77 @@ class EODHDAdapter:
             logger.debug(
                 f"[eodhd] Annual data years: {list(company.annual_financials.keys())}"
             )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Forward estimates parser
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _parse_forward_estimates(self, raw: dict) -> Optional[ForwardEstimates]:
+        """
+        Parse EODHD Earnings.Trend for the next fiscal year analyst consensus.
+
+        Picks the nearest future fiscal year-end date entry (relative to today).
+        Falls back to the most recent entry if no future dates exist.
+        Returns None if no usable data found.
+        """
+        earnings = raw.get("Earnings") or {}
+        trend = earnings.get("Trend") or {}
+        if not isinstance(trend, dict) or not trend:
+            return None
+
+        current_year = datetime.utcnow().year
+
+        # Collect (year, entry) pairs, prefer future years
+        candidates: list[tuple[int, dict]] = []
+        for date_str, entry in trend.items():
+            if not isinstance(entry, dict):
+                continue
+            yr = _year_from_date(date_str)
+            if yr and yr >= current_year:
+                candidates.append((yr, entry))
+
+        if not candidates:
+            # All entries are historical — take the most recent
+            for date_str, entry in trend.items():
+                if not isinstance(entry, dict):
+                    continue
+                yr = _year_from_date(date_str)
+                if yr:
+                    candidates.append((yr, entry))
+
+        if not candidates:
+            return None
+
+        # Pick the nearest year (smallest year number in the candidate set)
+        candidates.sort(key=lambda x: x[0])
+        target_year, entry = candidates[0]
+
+        rev = self._to_m(entry.get("revenueEstimateAvg"))
+        eps = self._parse_float(entry.get("earningsEstimateAvg"))
+
+        if rev is None and eps is None:
+            return None
+
+        fe = ForwardEstimates(year=target_year, source="eodhd")
+        fe.revenue    = rev
+        fe.eps_diluted = eps
+
+        rev_growth = self._parse_float(entry.get("revenueEstimateGrowth"))
+        if rev_growth is not None:
+            fe.revenue_growth_yoy = rev_growth
+
+        eps_growth = self._parse_float(entry.get("earningsEstimateGrowth"))
+        if eps_growth is not None:
+            fe.eps_growth_yoy = eps_growth
+
+        # Analyst count: use the higher of revenue / earnings analyst count
+        rev_n = self._parse_float(entry.get("revenueEstimateNumberOfAnalysts"))
+        eps_n = self._parse_float(entry.get("earningsEstimateNumberOfAnalysts"))
+        counts = [c for c in [rev_n, eps_n] if c is not None]
+        if counts:
+            fe.analyst_count = int(max(counts))
+
+        return fe
 
     # ──────────────────────────────────────────────────────────────────────────
     # Helpers
