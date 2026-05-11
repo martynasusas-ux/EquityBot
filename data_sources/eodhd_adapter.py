@@ -341,13 +341,72 @@ class EODHDAdapter:
 
         # ── Technicals ────────────────────────────────────────────────────────
         technicals = raw.get("Technicals") or {}
-        company.beta = self._parse_float(technicals.get("Beta"))
+        company.beta      = self._parse_float(technicals.get("Beta"))
+        company.week_52_high = self._parse_float(technicals.get("52WeekHigh"))
+        company.week_52_low  = self._parse_float(technicals.get("52WeekLow"))
+        company.ma_50     = self._parse_float(technicals.get("50DayMA"))
+        company.ma_200    = self._parse_float(technicals.get("200DayMA"))
 
-        # ── Shares outstanding ────────────────────────────────────────────────
+        # ── Shares outstanding & float ────────────────────────────────────────
         shares_stats = raw.get("SharesStats") or {}
         shares_raw = shares_stats.get("SharesOutstanding")
         if shares_raw is not None:
             company.shares_outstanding = self._to_m(shares_raw)
+        float_raw = shares_stats.get("SharesFloat")
+        if float_raw is not None:
+            company.shares_float = self._to_m(float_raw)
+        company.pct_insiders      = self._parse_float(shares_stats.get("PercentInsiders"))
+        company.pct_institutions  = self._parse_float(shares_stats.get("PercentInstitutions"))
+
+        # ── Splits & Dividends ────────────────────────────────────────────────
+        splits_divs = raw.get("SplitsDividends") or {}
+        company.forward_annual_dividend_rate  = self._parse_float(
+            splits_divs.get("ForwardAnnualDividendRate"))
+        company.forward_annual_dividend_yield = self._parse_float(
+            splits_divs.get("ForwardAnnualDividendYield"))
+        company.payout_ratio     = self._parse_float(splits_divs.get("PayoutRatio"))
+        company.dividend_date    = splits_divs.get("DividendDate") or None
+        company.ex_dividend_date = splits_divs.get("ExDividendDate") or None
+        company.last_split_factor = splits_divs.get("LastSplitFactor") or None
+        company.last_split_date   = splits_divs.get("LastSplitDate") or None
+
+        # ── Extended company identity ─────────────────────────────────────────
+        company.ipo_date         = general.get("IPODate") or None
+        company.fiscal_year_end  = general.get("FiscalYearEnd") or None
+        company.address          = general.get("Address") or None
+        company.phone            = general.get("Phone") or None
+
+        # Officers list (keep top 10)
+        officers_raw = general.get("Officers") or {}
+        if isinstance(officers_raw, dict):
+            for _, off in list(officers_raw.items())[:10]:
+                if isinstance(off, dict):
+                    name  = off.get("Name") or ""
+                    title = off.get("Title") or ""
+                    if name:
+                        company.officers.append({"name": name, "title": title})
+        elif isinstance(officers_raw, list):
+            for off in officers_raw[:10]:
+                if isinstance(off, dict):
+                    name  = off.get("Name") or off.get("name") or ""
+                    title = off.get("Title") or off.get("title") or ""
+                    if name:
+                        company.officers.append({"name": name, "title": title})
+
+        # ── Additional per-share & TTM metrics ───────────────────────────────
+        company.peg_ratio              = self._parse_float(highlights.get("PEGRatio"))
+        company.book_value_per_share   = self._parse_float(highlights.get("BookValue"))
+        company.revenue_per_share      = self._parse_float(highlights.get("RevenuePerShareTTM"))
+        company.eps_ttm                = self._parse_float(
+            highlights.get("EarningsShare") or highlights.get("EPSTTMDiluted"))
+        company.quarterly_revenue_growth_yoy   = self._parse_float(
+            highlights.get("QuarterlyRevenueGrowthYOY"))
+        company.quarterly_earnings_growth_yoy  = self._parse_float(
+            highlights.get("QuarterlyEarningsGrowthYOY"))
+
+        # Price-to-Sales (from Valuation block)
+        company.price_to_sales = self._parse_float(
+            valuation.get("PriceSalesTTM") or valuation.get("PriceToSales"))
 
         # ── Annual Financial History ──────────────────────────────────────────
         try:

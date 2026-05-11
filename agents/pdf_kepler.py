@@ -164,6 +164,16 @@ def _gearing(af: AnnualFinancials) -> Optional[float]:
     return af.net_debt / af.total_equity
 
 
+def _ev_ic(af: AnnualFinancials) -> Optional[float]:
+    """EV / Invested Capital (equity + net debt)."""
+    if af.enterprise_value is None:
+        return None
+    ic = (af.total_equity or 0) + (af.net_debt or 0)
+    if ic <= 0:
+        return None
+    return af.enterprise_value / ic
+
+
 def _capex_sales(af: AnnualFinancials) -> Optional[float]:
     if af.capex is None or af.revenue is None or af.revenue <= 0:
         return None
@@ -351,9 +361,9 @@ def _hdr_row(
     """Build a column-header row: [label, y1, y2, ..., E1, ...]."""
     row = [Paragraph(f"{label}{label_suffix}", styles["col_hdr_lbl"])]
     for y in hist_years:
-        row.append(Paragraph(f"12/{str(y)[2:]}", styles["col_hdr"]))
+        row.append(Paragraph(f"12/{y}", styles["col_hdr"]))
     for y in est_years:
-        row.append(Paragraph(f"<b>12/{str(y)[2:]}E</b>", styles["col_hdr"]))
+        row.append(Paragraph(f"<b>12/{y}E</b>", styles["col_hdr"]))
     return row
 
 
@@ -534,19 +544,16 @@ def _build_summary_page(
     story.append(HRFlowable(width=CW, thickness=0.4, color=RULE, spaceAfter=4))
 
     # ── Main KPI table (two-panel: left = P&L, right = ratios) ───────────────
-    # Show: latest 1 historical year + up to 1 forward year
-    sum_hist = hist_years[-1:]      # just the latest historical year
+    # Show: last 3 historical years + 1 forward year  (e.g. 2023 2024 2025 2026E)
+    sum_hist = hist_years[-3:]      # last 3 historical years, chronological
     sum_est  = est_years[:1]        # at most 1 forward year
     sum_years = sum_hist + sum_est
+    n_sum_cols = len(sum_years)     # 3 or 4
 
-    # Header labels
-    def _sy(y, est=False):
-        tag = "E" if est else ""
-        return f"12/{str(y)[2:]}{tag}"
+    # Full-year header labels: "12/2024", "12/2026E"
+    yr_labels = [f"12/{y}" for y in sum_hist] + [f"12/{y}E" for y in sum_est]
 
-    yr_labels = [_sy(y) for y in sum_hist] + [_sy(y, est=True) for y in sum_est]
-
-    # Left panel rows: [label, *values]
+    # Value helpers
     def _lv(af, fn, fmt):
         if af is None:
             return "n/a"
@@ -567,67 +574,53 @@ def _build_summary_page(
         if fmt == "ps":  return _ps(v)
         return "n/a"
 
+    # Row definitions — labels match reference exactly
     L_ROWS = [
-        ("Sales (m)",         lambda af: af.revenue,    "M",  lambda fe: fe.revenue),
-        ("EBITDA (m)",        lambda af: af.ebitda,     "M",  None),
-        ("EBIT (m)",          lambda af: af.ebit,       "M",  None),
-        ("Net profit (m)",    lambda af: af.net_income, "M",  lambda fe: fe.net_income),
-        ("Net debt",          lambda af: af.net_debt,   "M",  None),
-        ("FCF (m)",           lambda af: af.fcf,        "M",  None),
-        ("EPS adj. dil.",     lambda af: af.eps_diluted,"ps", lambda fe: fe.eps_diluted),
-        ("Consensus EPS",     None,                     "ps", lambda fe: fe.eps_diluted),
-        ("Net dividend",      lambda af: af.dividends_per_share, "ps", None),
+        ("Sales (m)",              lambda af: af.revenue,              "M",  lambda fe: fe.revenue),
+        ("EBITDA adj (m)",         lambda af: af.ebitda,               "M",  lambda fe: fe.ebitda),
+        ("EBIT adj (m)",           lambda af: af.ebit,                 "M",  None),
+        ("Net profit adj (m)",     lambda af: af.net_income,           "M",  lambda fe: fe.net_income),
+        ("Net debt",               lambda af: af.net_debt,             "M",  None),
+        ("FCF (m)",                lambda af: af.fcf,                  "M",  None),
+        ("EPS adj. and fully dil.",lambda af: af.eps_diluted,          "ps", lambda fe: fe.eps_diluted),
+        ("Consensus EPS",          None,                               "ps", lambda fe: fe.eps_diluted),
+        ("Net dividend",           lambda af: af.dividends_per_share,  "ps", None),
     ]
     R_ROWS = [
-        ("P/E (x)",           lambda af: af.pe_ratio,   "x",  lambda fe: fe.pe_ratio),
-        ("EV/EBITDA (x)",     _ev_ebitda,               "x",  None),
-        ("EV/EBIT (x)",       lambda af: af.ev_ebit,    "x",  None),
-        ("FCF yield (%)",     lambda af: af.fcf_yield,  "%",  None),
-        ("Dividend yield (%)",lambda af: af.div_yield,  "%",  None),
-        ("Net Debt / EBITDA", _nd_ebitda,               "x",  None),
-        ("Gearing (%)",       _gearing,                 "%",  None),
-        ("ROE (%)",           lambda af: af.roe,        "%",  None),
-        ("EV/Sales (x)",      lambda af: af.ev_sales,   "x",  lambda fe: fe.ev_sales),
+        ("P/E (x) adj and ful. dil.", lambda af: af.pe_ratio,   "x",  lambda fe: fe.pe_ratio),
+        ("EV/EBITDA (x)",             _ev_ebitda,               "x",  None),
+        ("EV/EBIT (x)",               lambda af: af.ev_ebit,    "x",  None),
+        ("FCF yield (%)",             lambda af: af.fcf_yield,  "%",  None),
+        ("Dividend yield (%)",        lambda af: af.div_yield,  "%",  None),
+        ("Net Debt / EBITDA adj",     _nd_ebitda,               "x",  None),
+        ("Gearing (%)",               _gearing,                 "%",  None),
+        ("ROE (%)",                   lambda af: af.roe,        "%",  None),
+        ("EV/IC (x)",                 _ev_ic,                   "x",  None),
     ]
 
-    def _summary_panel(row_defs, is_right=False):
-        """Build panel rows as plain lists of strings."""
+    def _summary_panel(row_defs):
         panel = []
-        for i, (lbl, hist_fn, fmt, est_fn) in enumerate(row_defs):
+        for (lbl, hist_fn, fmt, est_fn) in row_defs:
             cells = [lbl]
             for y in sum_hist:
                 af = afs.get(y)
-                if hist_fn is None:
-                    cells.append("—")
-                else:
-                    cells.append(_lv(af, hist_fn, fmt))
+                cells.append(_lv(af, hist_fn, fmt) if hist_fn is not None else "—")
             for _ in sum_est:
-                if est_fn is None:
-                    cells.append("—")
-                else:
-                    cells.append(_ev(est_fn, fmt))
+                cells.append(_ev(est_fn, fmt) if est_fn is not None else "—")
             panel.append(cells)
         return panel
 
     l_data = _summary_panel(L_ROWS)
-    r_data = _summary_panel(R_ROWS, is_right=True)
+    r_data = _summary_panel(R_ROWS)
 
-    n_sum_cols = len(sum_years)      # 1 or 2
+    # Column widths: 4 data cols each side, total must fit CW (~510 pts)
+    # l_lbl + n*l_yr + gap + r_lbl + n*r_yr = CW
+    l_lbl_w = 97
+    r_lbl_w = 97
+    gap_w   = 10
+    yr_w    = int((CW - l_lbl_w - r_lbl_w - gap_w) / (n_sum_cols * 2))
 
-    # Left panel: label(110) + year cols
-    l_lbl_w = 110
-    l_yr_w  = 60
-    l_total = l_lbl_w + l_yr_w * n_sum_cols
-
-    # Right panel: label(110) + year cols
-    r_lbl_w = 115
-    r_yr_w  = 55
-    r_total = r_lbl_w + r_yr_w * n_sum_cols
-
-    gap = CW - l_total - r_total
-
-    # Build combined side-by-side as one Table
-    # Cols: [L_lbl, L_yr*, spacer, R_lbl, R_yr*]
+    # Build combined side-by-side table
     combo_hdr = (
         [Paragraph(f"FY ({cur})", styles["col_hdr_lbl"])]
         + [Paragraph(y, styles["col_hdr"]) for y in yr_labels]
@@ -636,10 +629,8 @@ def _build_summary_page(
         + [Paragraph(y, styles["col_hdr"]) for y in yr_labels]
     )
 
-    def _p(txt, bold=False, est=False):
-        if est:
-            return Paragraph(txt, styles["cell_est"])
-        st = styles["lbl_bold"] if bold else styles["cell"]
+    def _p(txt, est=False):
+        st = styles["cell_est"] if est else styles["cell"]
         return Paragraph(txt, st)
 
     combo_rows = [combo_hdr]
@@ -655,11 +646,10 @@ def _build_summary_page(
         )
         combo_rows.append(row)
 
-    gap_col = max(gap, 8)
     combo_widths = (
-        [l_lbl_w] + [l_yr_w] * n_sum_cols
-        + [gap_col]
-        + [r_lbl_w] + [r_yr_w] * n_sum_cols
+        [l_lbl_w] + [yr_w] * n_sum_cols
+        + [gap_w]
+        + [r_lbl_w] + [yr_w] * n_sum_cols
     )
 
     combo_tbl = Table(combo_rows, colWidths=combo_widths, hAlign="LEFT")
@@ -668,16 +658,16 @@ def _build_summary_page(
         ("FONTSIZE",    (0, 0), (-1, -1), 7.5),
         ("ALIGN",       (0, 0), (0, -1),  "LEFT"),
         ("ALIGN",       (1, 0), (-1, -1), "RIGHT"),
+        # Right-panel label col: left-align
+        ("ALIGN",
+         (1 + n_sum_cols + 1, 0),
+         (1 + n_sum_cols + 1, -1), "LEFT"),
         ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING",  (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("LINEBELOW",   (0, 0), (-1, 0),  0.6, BORDER),   # after header row
-        # Align gap col left label
-        ("ALIGN",
-         (1 + n_sum_cols + 1, 0),
-         (1 + n_sum_cols + 1, -1), "LEFT"),
+        ("LINEBELOW",   (0, 0), (-1, 0),  0.6, BORDER),
     ]
     for i in range(1, len(combo_rows)):
         if i % 2 == 0:

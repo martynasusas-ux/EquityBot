@@ -146,7 +146,7 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary"}
+_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary", "eodhd_sheet"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -948,6 +948,8 @@ if generate_clicked and ticker_input:
 
             elif report_type == "kepler_summary":
                 # ── Kepler-style analyst summary sheet ────────────────────────
+                import importlib, models.kepler_summary as _ksmod
+                importlib.reload(_ksmod)
                 from models.kepler_summary import (
                     _kepler_prompt_parts, SYSTEM_PROMPT as SYS,
                 )
@@ -969,6 +971,8 @@ if generate_clicked and ticker_input:
 
                 _prog.progress(88, text="📄  Rendering Kepler Summary PDF…")
                 st.write("📄  Rendering Kepler Summary PDF…")
+                import importlib, agents.pdf_kepler as _kmod
+                importlib.reload(_kmod)
                 from agents.pdf_kepler import KeplerPDFGenerator
                 safe = ticker_input.replace(".", "_").replace("-", "_")
                 date = datetime.now().strftime("%Y-%m-%d")
@@ -976,6 +980,21 @@ if generate_clicked and ticker_input:
                 os.makedirs(OUTPUTS_DIR, exist_ok=True)
                 KeplerPDFGenerator().render(company, analysis, pdf_path)
                 extra = {"target_price": tp, "valuation_method": analysis.get("valuation_method", "")}
+
+            elif report_type == "eodhd_sheet":
+                # ── EODHD Comprehensive Fundamental Data Sheet ────────────────
+                # No LLM call — pure data dump from EODHD fields.
+                _prog.progress(80, text="📄  Rendering EODHD Data Sheet…")
+                st.write("📄  Rendering EODHD Data Sheet…")
+                import importlib, agents.pdf_eodhd_sheet as _esmod
+                importlib.reload(_esmod)
+                from agents.pdf_eodhd_sheet import EODHDSheetGenerator
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_sheet_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                EODHDSheetGenerator().render(company, pdf_path)
+                extra = {}
 
             elif report_type not in _BUILTIN_IDS:
                 # ── User-created / custom framework ───────────────────────────

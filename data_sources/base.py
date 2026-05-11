@@ -207,6 +207,42 @@ class CompanyData:
     interest_coverage: Optional[float] = None
     beta: Optional[float] = None
 
+    # ── Technical / Price Levels ──────────────────────────────────────────────
+    week_52_high: Optional[float] = None    # 52-week high price
+    week_52_low: Optional[float] = None     # 52-week low price
+    ma_50: Optional[float] = None           # 50-day moving average
+    ma_200: Optional[float] = None          # 200-day moving average
+
+    # ── Ownership Structure ───────────────────────────────────────────────────
+    shares_float: Optional[float] = None        # Float shares in millions
+    pct_insiders: Optional[float] = None        # % held by insiders (decimal)
+    pct_institutions: Optional[float] = None    # % held by institutions (decimal)
+
+    # ── Dividends & Corporate Actions ────────────────────────────────────────
+    payout_ratio: Optional[float] = None
+    forward_annual_dividend_rate: Optional[float] = None   # Per-share annual div
+    forward_annual_dividend_yield: Optional[float] = None  # Decimal
+    dividend_date: Optional[str] = None
+    ex_dividend_date: Optional[str] = None
+    last_split_factor: Optional[str] = None    # e.g. "2:1"
+    last_split_date: Optional[str] = None
+
+    # ── Extended Company Identity ─────────────────────────────────────────────
+    ipo_date: Optional[str] = None
+    fiscal_year_end: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    officers: List[dict] = field(default_factory=list)  # [{name, title}, ...]
+
+    # ── Additional Per-Share & TTM Metrics ────────────────────────────────────
+    peg_ratio: Optional[float] = None
+    price_to_sales: Optional[float] = None
+    book_value_per_share: Optional[float] = None
+    revenue_per_share: Optional[float] = None
+    eps_ttm: Optional[float] = None
+    quarterly_revenue_growth_yoy: Optional[float] = None
+    quarterly_earnings_growth_yoy: Optional[float] = None
+
     # ── 10-Year Annual History ────────────────────────────────────────────────
     # Keys are fiscal year integers: {2024: AnnualFinancials(...), 2023: ...}
     annual_financials: Dict[int, AnnualFinancials] = field(default_factory=dict)
