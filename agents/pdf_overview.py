@@ -256,10 +256,18 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
 
     add_row(f"Sales ({cur}M)",  lambda a: a.revenue,
             est_val=fe.revenue if fe else None)
-    add_row("EBITDA",           lambda a: a.ebitda)          # not in free estimates
-    add_row("Net Profit",       lambda a: a.net_income,
-            est_val=fe.net_income if fe else None)
-    add_row("Net Fin. Debt",    lambda a: a.net_debt)        # not forward-looking
+    add_row("EBITDA",              lambda a: a.ebitda)
+
+    # Net Profit — two rows: IFRS reported and underlying (EPS-derived)
+    add_row("Net Profit (IFRS)",  lambda a: a.net_income)    # IFRS attributable to shareholders
+    # Underlying forward net income derived from consensus EPS × current shares
+    _fe_ni_underlying = None
+    if fe and fe.eps_diluted and company.shares_outstanding:
+        _fe_ni_underlying = fe.eps_diluted * company.shares_outstanding
+    add_row("Net Profit (Adj.)",  lambda a: a.net_income_underlying,
+            est_val=_fe_ni_underlying)
+
+    add_row("Net Fin. Debt",      lambda a: a.net_debt)      # not forward-looking
     add_row("Net Margin",       lambda a: a.net_margin,  "%",
             est_val=fe.net_margin if fe else None)
     add_row("EBIT Margin",      lambda a: a.ebit_margin, "%")  # not in free estimates

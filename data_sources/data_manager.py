@@ -487,12 +487,19 @@ class DataManager:
             if src_val is not None:
                 setattr(target, f, src_val)
 
-        # net_income and eps_diluted: fill-only (preserve yfinance IFRS figures)
-        for f in ("net_income", "eps_diluted"):
-            if getattr(target, f, None) is None:
-                src_val = getattr(source, f, None)
-                if src_val is not None:
-                    setattr(target, f, src_val)
+        # net_income: fill-only — preserve yfinance IFRS consolidated net income
+        if getattr(target, "net_income", None) is None:
+            src_ni = getattr(source, "net_income", None)
+            if src_ni is not None:
+                target.net_income = src_ni
+
+        # eps_diluted: ALWAYS override with EODHD Earnings.Annual epsActual.
+        # yfinance reports IFRS EPS which can be significantly lower than the
+        # underlying EPS that analyst consensus tracks (e.g. RHM FY2025:
+        # yfinance 15.16 vs actual underlying 25.72). EODHD is authoritative here.
+        src_eps = getattr(source, "eps_diluted", None)
+        if src_eps is not None:
+            target.eps_diluted = src_eps
 
         # Balance sheet: override unconditionally if full_override, else fill-only
         balance_fields = [
@@ -515,6 +522,7 @@ class DataManager:
             "roe", "roa", "net_margin", "pe_ratio",
             "ev_ebit", "ev_sales", "fcf_yield", "div_yield",
             "enterprise_value",
+            "net_income_underlying",  # recomputed from updated eps_diluted × shares
         ):
             setattr(target, derived, None)
 

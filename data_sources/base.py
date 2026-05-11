@@ -26,7 +26,8 @@ class AnnualFinancials:
     ebitda: Optional[float] = None          # Earnings before interest, tax, D&A
     ebit: Optional[float] = None            # Operating income (= EBIT)
     net_income: Optional[float] = None
-    eps_diluted: Optional[float] = None     # Earnings per share (diluted)
+    net_income_underlying: Optional[float] = None  # EPS-derived underlying net income (adj. EPS × shares)
+    eps_diluted: Optional[float] = None     # Underlying/adjusted EPS (from EODHD Earnings.Annual)
     dividends_per_share: Optional[float] = None
 
     # Margins (as decimals: 0.15 = 15%)
@@ -97,6 +98,11 @@ class AnnualFinancials:
         if self.roa is None and self.net_income is not None and self.total_assets is not None:
             if self.total_assets > 0:
                 self.roa = self.net_income / self.total_assets
+
+        # Underlying net income = adjusted EPS × shares (analyst-comparable basis)
+        if self.net_income_underlying is None and self.eps_diluted is not None and self.shares_outstanding is not None:
+            if self.shares_outstanding > 0:
+                self.net_income_underlying = self.eps_diluted * self.shares_outstanding
 
         # ── Market-cap based historical ratios ────────────────────────────────
         # These are computed once price_year_end and market_cap are populated

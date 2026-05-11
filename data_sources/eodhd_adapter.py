@@ -418,6 +418,31 @@ class EODHDAdapter:
         except Exception as e:
             logger.warning(f"[eodhd] Could not parse annual financials for {ticker}: {e}")
 
+        # ── Actual EPS from Earnings.Annual (underlying EPS, more reliable than
+        #    the income statement eps field which is often None in EODHD) ───────
+        try:
+            self._parse_earnings_annual_eps(raw, company)
+        except Exception as e:
+            logger.warning(f"[eodhd] Could not parse Earnings.Annual for {ticker}: {e}")
+
+        # ── Forward dividend: fill most recent year's DPS if missing ──────────
+        # Spring-payer fix: for companies that pay the prior fiscal year's
+        # dividend after fiscal year-end (e.g. German companies paying in May),
+        # yfinance won't have the entry yet. Use EODHD ForwardAnnualDividendRate
+        # as the declared dividend for the most recent fiscal year.
+        try:
+            fwd_div_rate = self._parse_float(splits_divs.get("ForwardAnnualDividendRate"))
+            if fwd_div_rate and company.annual_financials:
+                latest_yr = max(company.annual_financials.keys())
+                if company.annual_financials[latest_yr].dividends_per_share is None:
+                    company.annual_financials[latest_yr].dividends_per_share = fwd_div_rate
+                    logger.debug(
+                        f"[eodhd] Set FY{latest_yr} DPS={fwd_div_rate} "
+                        f"from ForwardAnnualDividendRate"
+                    )
+        except Exception as e:
+            logger.warning(f"[eodhd] Could not apply forward DPS for {ticker}: {e}")
+
         # ── Forward Estimates (Earnings.Trend) ────────────────────────────────
         try:
             fe = self._parse_forward_estimates(raw)
@@ -568,6 +593,36 @@ class EODHDAdapter:
             logger.debug(
                 f"[eodhd] Annual data years: {list(company.annual_financials.keys())}"
             )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Actual EPS from Earnings.Annual
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _parse_earnings_annual_eps(self, raw: dict, company: CompanyData) -> None:
+        """
+        Apply epsActual from EODHD Earnings.Annual to matching annual_financials rows.
+
+        EODHD Earnings.Annual contains the actual underlying/adjusted EPS per fiscal
+        year as reported by management (add-backs for purchase price amortisation,
+        restructuring etc.). This is the metric analyst consensus tracks, so it must
+        be the basis for eps_diluted — NOT the IFRS EPS that yfinance may report,
+        which can be significantly lower (e.g. RHM 2025: yfinance 15.16 vs actual 25.72).
+        """
+        earnings = raw.get("Earnings") or {}
+        annual   = earnings.get("Annual") or {}
+        if not isinstance(annual, dict) or not annual:
+            return
+
+        for date_str, entry in annual.items():
+            if not isinstance(entry, dict):
+                continue
+            yr = _year_from_date(date_str)
+            if not yr or yr not in company.annual_financials:
+                continue
+            eps_actual = self._parse_float(entry.get("epsActual"))
+            if eps_actual is not None:
+                company.annual_financials[yr].eps_diluted = eps_actual
+                logger.debug(f"[eodhd] Set FY{yr} eps_diluted={eps_actual} from Earnings.Annual")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Forward estimates parser
