@@ -100,9 +100,12 @@ class AnnualFinancials:
                 self.roa = self.net_income / self.total_assets
 
         # Underlying net income = adjusted EPS × shares (analyst-comparable basis)
+        # shares_outstanding in AnnualFinancials is stored in full units (e.g. 43_381_664),
+        # not millions — divide by 1e6 to get the same millions unit as net_income.
         if self.net_income_underlying is None and self.eps_diluted is not None and self.shares_outstanding is not None:
             if self.shares_outstanding > 0:
-                self.net_income_underlying = self.eps_diluted * self.shares_outstanding
+                shares_m = self.shares_outstanding / 1_000_000 if self.shares_outstanding > 1_000 else self.shares_outstanding
+                self.net_income_underlying = self.eps_diluted * shares_m
 
         # ── Market-cap based historical ratios ────────────────────────────────
         # These are computed once price_year_end and market_cap are populated
