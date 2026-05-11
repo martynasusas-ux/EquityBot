@@ -199,9 +199,9 @@ class DataManager:
                         "dividend_date", "ex_dividend_date",
                         "last_split_factor", "last_split_date",
                         "dividend_yield",
-                        # Valuation multiples
-                        "forward_pe", "price_to_book", "price_to_sales", "peg_ratio",
-                        "ev_sales", "ev_ebitda",
+                        # Valuation multiples — EODHD is primary source
+                        "pe_ratio", "forward_pe", "price_to_book", "price_to_sales",
+                        "peg_ratio", "ev_sales", "ev_ebitda",
                         # Per-share & TTM metrics
                         "book_value_per_share", "revenue_per_share", "eps_ttm",
                         # Profitability / growth
@@ -210,7 +210,8 @@ class DataManager:
                         "eps_estimate_next_year",
                     ],
                     override_financials=True,
-                    full_override=True,  # EODHD paid: trust all statement types
+                    full_override=True,       # EODHD paid: trust all statement types
+                    override_scalars=True,    # EODHD scalars override yfinance stubs
                 )
                 logger.info(
                     f"[DataManager] After EODHD: "
@@ -219,6 +220,24 @@ class DataManager:
                 )
             else:
                 logger.info(f"[DataManager] EODHD unavailable for {ticker}: {result.error}")
+
+        # ── Reset derived compound scalars after EODHD ────────────────────────
+        # EODHD just replaced the annual_financials with more accurate data.
+        # Any compound scalars yfinance computed earlier (EV multiples, gearing,
+        # margins, ROE/ROA) were derived from yfinance's annual stubs and are now
+        # stale. Reset them to None so calculate_current_ratios() and the
+        # re-derivation block below recompute them from EODHD annual data.
+        # enterprise_value and net_debt are also reset so EV recalculates from
+        # yfinance market_cap (live) + EODHD net_debt (accurate balance sheet).
+        if eodhd_succeeded:
+            for _f in [
+                "enterprise_value", "net_debt",
+                "ev_ebit", "ev_ebitda", "ev_sales",
+                "fcf_yield", "gearing",
+                "net_margin", "ebit_margin", "ebitda_margin", "gross_margin",
+                "roe", "roa",
+            ]:
+                setattr(company, _f, None)
 
         # ── Tier 1c: SEC EDGAR (US tickers — fill-only after EODHD) ──────────
         # EDGAR provides direct-from-SEC filings for US companies.
@@ -344,6 +363,7 @@ class DataManager:
         fields: List[str],
         override_financials: bool = False,
         full_override: bool = False,
+        override_scalars: bool = False,
     ) -> None:
         """
         Merge fields from source into target (in-place).
@@ -358,8 +378,19 @@ class DataManager:
           - override_financials=True, full_override=True: replace ALL fields
             (income statement + balance sheet + cash flow) from source.
             Use for EODHD paid data which is trusted for all statement types.
-        For scalar fields: only copy if target field is None.
+
+        For scalar fields:
+          - override_scalars=False (default): fill-only — only copy if target is None.
+          - override_scalars=True: unconditionally overwrite target with source value,
+            except for fields in _SCALAR_PROTECTED (live market data from yfinance
+            that is more up-to-date than any paid fundamental feed).
         """
+        # Fields that must always come from yfinance regardless of override_scalars.
+        # current_price and market_cap are real-time; shares_outstanding has a known
+        # EODHD bug (commonStock = par-value capital, not share count).
+        _SCALAR_PROTECTED = {"current_price", "market_cap", "shares_outstanding",
+                             "as_of_date", "input_ticker"}
+
         if "annual_financials" in fields:
             for year, src_af in source.annual_financials.items():
                 if year not in target.annual_financials:
@@ -374,17 +405,26 @@ class DataManager:
                     tgt_af = target.annual_financials[year]
                     self._merge_annual(tgt_af, src_af)
 
-        # Scalar (and list) fields — copy when target is None or empty list
+        # Scalar (and list) fields
         scalar_fields = [f for f in fields if f != "annual_financials"]
         for field in scalar_fields:
-            if hasattr(target, field) and hasattr(source, field):
+            if not hasattr(target, field) or not hasattr(source, field):
+                continue
+            src_val = getattr(source, field)
+            src_has = (src_val is not None and
+                       not (isinstance(src_val, list) and len(src_val) == 0))
+            if not src_has:
+                continue
+
+            if override_scalars and field not in _SCALAR_PROTECTED:
+                # EODHD paid data takes priority — overwrite unconditionally
+                setattr(target, field, src_val)
+            else:
+                # Fill-only: only write when target is empty
                 tgt_val = getattr(target, field)
-                src_val = getattr(source, field)
                 tgt_empty = (tgt_val is None or
                              (isinstance(tgt_val, list) and len(tgt_val) == 0))
-                src_has   = (src_val is not None and
-                             not (isinstance(src_val, list) and len(src_val) == 0))
-                if tgt_empty and src_has:
+                if tgt_empty:
                     setattr(target, field, src_val)
 
         # Track sources
