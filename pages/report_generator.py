@@ -146,7 +146,7 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"overview", "fisher", "gravity"}
+_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -945,6 +945,37 @@ if generate_clicked and ticker_input:
                 FisherPDFGenerator().render(company, analysis, pdf_path,
                                             adv_result=adv_result)
                 extra = {"score": score, "grade": grade}
+
+            elif report_type == "kepler_summary":
+                # ── Kepler-style analyst summary sheet ────────────────────────
+                from models.kepler_summary import (
+                    _kepler_prompt_parts, SYSTEM_PROMPT as SYS,
+                )
+                cacheable_pfx, dynamic_prompt = _kepler_prompt_parts(
+                    company, news_block=_news_block,
+                    macro_country_block=_country_macro_block
+                )
+                _prog.progress(25, text="🤖  Generating target price & recommendation…")
+                st.write("🤖  Generating target price and recommendation (Claude)…")
+                analysis = llm.generate_json(
+                    dynamic_prompt, SYS, max_tokens=400,
+                    cacheable_prefix=cacheable_pfx,
+                )
+                tp  = analysis.get("target_price", "n/a")
+                rec = analysis.get("recommendation", "n/a")
+                st.write(f"✓  Recommendation: **{rec}** · Target: **{tp} {company.currency_price or ''}**")
+                _show_token_usage(llm.last_usage)
+                _prog.progress(75, text="✓  Analysis complete")
+
+                _prog.progress(88, text="📄  Rendering Kepler Summary PDF…")
+                st.write("📄  Rendering Kepler Summary PDF…")
+                from agents.pdf_kepler import KeplerPDFGenerator
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_kepler_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                KeplerPDFGenerator().render(company, analysis, pdf_path)
+                extra = {"target_price": tp, "valuation_method": analysis.get("valuation_method", "")}
 
             elif report_type not in _BUILTIN_IDS:
                 # ── User-created / custom framework ───────────────────────────
