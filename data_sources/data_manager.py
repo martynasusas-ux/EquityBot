@@ -183,6 +183,10 @@ class DataManager:
                     company, result.data, prefer_source="eodhd",
                     fields=[
                         "annual_financials",
+                        # Identity — fill when yfinance returns partial/empty info
+                        "name", "exchange", "currency", "currency_price",
+                        "sector", "industry", "country", "isin",
+                        # Valuation scalars
                         "forward_pe", "price_to_book",
                         "ev_sales", "ev_ebitda",
                         "roa", "ebit_margin", "ebitda_margin", "gross_margin",

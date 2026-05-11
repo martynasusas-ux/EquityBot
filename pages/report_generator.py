@@ -758,8 +758,15 @@ if generate_clicked and ticker_input:
             st.write(f"📡  Fetching financial data for **{ticker_input}**...")
             company = dm.get(ticker_input, force_refresh=force_refresh)
 
-            if not company.name:
-                # Try to suggest the correct ticker
+            # Check we got meaningful data. A missing name alone is not fatal —
+            # EODHD now fills it, but if everything is empty we should error out.
+            _has_data = bool(
+                company.annual_financials
+                or company.current_price
+                or company.market_cap
+            )
+            if not _has_data:
+                # Genuinely empty — suggest alternatives
                 _suggestions = _search_tickers(ticker_input, max_results=4)
                 if _suggestions:
                     _hint = ", ".join(
@@ -775,6 +782,9 @@ if generate_clicked and ticker_input:
                         f"Check the format — e.g. AAPL, WKL.AS, NOKIA.HE. "
                         f"Use the Yahoo Finance ticker symbol, not the company name."
                     )
+            # If name is still missing after all sources, fall back to the ticker
+            if not company.name:
+                company.name = ticker_input
 
             yrs   = company.year_range()
             compl = company.completeness_pct()
