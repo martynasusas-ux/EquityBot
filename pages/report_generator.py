@@ -16,6 +16,10 @@ import streamlit as st
 # ── Path setup ────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# ── Auth guard — must be first, blocks unauthenticated direct URL access ──────
+from utils.auth import require_auth
+require_auth()
+
 from config import LLM_PROVIDER, LLM_MODEL, OUTPUTS_DIR, ADVERSARIAL_MODE as _CFG_ADV_MODE
 from agents.llm_client import LLMClient
 from data_sources.data_manager import DataManager

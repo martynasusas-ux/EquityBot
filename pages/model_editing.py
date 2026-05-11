@@ -23,6 +23,10 @@ import streamlit as st
 # ── Path setup ────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# ── Auth guard — must be first, blocks unauthenticated direct URL access ──────
+from utils.auth import require_auth
+require_auth()
+
 
 def _inject_secrets() -> None:
     try:
