@@ -210,15 +210,62 @@ class EODHDAdapter:
         # ── Highlights (current-period market & ratio data) ───────────────────
         highlights = raw.get("Highlights") or {}
 
-        company.market_cap = self._to_m(highlights.get("MarketCapitalization"))
-        company.pe_ratio   = self._parse_float(highlights.get("PERatio"))
-        company.roe        = self._parse_float(highlights.get("ReturnOnEquityTTM"))
-        company.net_margin = self._parse_float(highlights.get("ProfitMargin"))
+        # Market cap: prefer the pre-calculated Mln version, fall back to raw
+        mkt_cap_mln = self._parse_float(highlights.get("MarketCapitalizationMln"))
+        if mkt_cap_mln is not None:
+            company.market_cap = mkt_cap_mln
+        else:
+            company.market_cap = self._to_m(highlights.get("MarketCapitalization"))
+
+        company.pe_ratio      = self._parse_float(highlights.get("PERatio"))
+        company.roe           = self._parse_float(highlights.get("ReturnOnEquityTTM"))
+        company.roa           = self._parse_float(highlights.get("ReturnOnAssetsTTM"))
+        company.net_margin    = self._parse_float(highlights.get("ProfitMargin"))
+        company.ebit_margin   = self._parse_float(highlights.get("OperatingMarginTTM"))
+        company.ebitda_margin = self._parse_float(
+            highlights.get("EBITDAMargin") or highlights.get("EbitdaMargin")
+        )
 
         # Dividend yield: EODHD returns as a decimal already (0.02 = 2%)
         company.dividend_yield = self._parse_float(highlights.get("DividendYield"))
 
-        for f in ["market_cap", "pe_ratio", "roe", "net_margin", "dividend_yield"]:
+        # TTM figures — store for EV ratio derivation below
+        _rev_ttm    = self._to_m(highlights.get("RevenueTTM"))
+        _ebitda_ttm = self._to_m(highlights.get("EBITDA"))
+
+        # Forward analyst EPS estimates
+        _eps_est_cy = self._parse_float(highlights.get("EPSEstimateCurrentYear"))
+        _eps_est_ny = self._parse_float(highlights.get("EPSEstimateNextYear"))
+        if _eps_est_ny is not None:
+            company.eps_estimate_next_year = _eps_est_ny
+        if _eps_est_cy is not None and company.eps_estimate_next_year is None:
+            company.eps_estimate_next_year = _eps_est_cy
+
+        for f in ["market_cap", "pe_ratio", "roe", "roa", "net_margin",
+                  "ebit_margin", "dividend_yield"]:
+            if getattr(company, f) is not None:
+                fields_filled.append(f)
+
+        # ── Valuation Block (EV multiples & book ratios) ──────────────────────
+        valuation = raw.get("Valuation") or {}
+
+        # Forward P/E
+        company.forward_pe = self._parse_float(valuation.get("ForwardPE"))
+
+        # Price/Book
+        company.price_to_book = self._parse_float(
+            valuation.get("PriceBookMRQ") or valuation.get("PriceBook")
+        )
+
+        # EV multiples — EODHD calculates these directly
+        company.ev_sales  = self._parse_float(
+            valuation.get("EnterpriseValueRevenue") or valuation.get("EVRevenue")
+        )
+        company.ev_ebitda = self._parse_float(
+            valuation.get("EnterpriseValueEbitda") or valuation.get("EVEbitda")
+        )
+
+        for f in ["forward_pe", "price_to_book", "ev_sales", "ev_ebitda"]:
             if getattr(company, f) is not None:
                 fields_filled.append(f)
 
@@ -278,9 +325,14 @@ class EODHDAdapter:
         All monetary values arrive as strings (or None); raw units (not millions).
         We convert to millions via _to_m().
         """
-        income_annual   = (financials_block.get("Income_Statement")  or {}).get("annual") or {}
-        balance_annual  = (financials_block.get("Balance_Sheet")     or {}).get("annual") or {}
-        cashflow_annual = (financials_block.get("Cash_Flow")         or {}).get("annual") or {}
+        # EODHD uses "yearly" as the key for annual data (not "annual")
+        def _annual(block_key: str) -> dict:
+            blk = financials_block.get(block_key) or {}
+            return blk.get("yearly") or blk.get("annual") or {}
+
+        income_annual   = _annual("Income_Statement")
+        balance_annual  = _annual("Balance_Sheet")
+        cashflow_annual = _annual("Cash_Flow")
 
         if not income_annual:
             logger.debug(f"[eodhd] No annual income statement data available.")
@@ -325,16 +377,21 @@ class EODHDAdapter:
                     b.get("totalStockholderEquity")
                     or b.get("totalEquity")
                 )
-                # Debt: prefer combined short+long, fall back to long-term only
-                short_debt = self._to_m(b.get("shortLongTermDebt"))
-                long_debt  = self._to_m(b.get("longTermDebt"))
-                if short_debt is not None:
-                    af.total_debt = short_debt
-                elif long_debt is not None:
-                    af.total_debt = long_debt
+                # Debt: EODHD uses several field names depending on company/period.
+                # shortLongTermDebtTotal  = total of short + long term (best)
+                # shortLongTermDebt       = usually just current portion
+                # longTermDebt            = long-term only (minimum fallback)
+                total_debt_val = (
+                    self._to_m(b.get("shortLongTermDebtTotal"))
+                    or self._to_m(b.get("shortLongTermDebt"))
+                    or self._to_m(b.get("longTermDebt"))
+                )
+                if total_debt_val is not None:
+                    af.total_debt = total_debt_val
 
                 af.cash = self._to_m(
-                    b.get("cashAndCashEquivalentsAtCarryingValue")
+                    b.get("cashAndEquivalents")
+                    or b.get("cashAndCashEquivalentsAtCarryingValue")
                     or b.get("cash")
                 )
 

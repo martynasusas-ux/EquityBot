@@ -4,17 +4,21 @@ data_manager.py — Data waterfall orchestrator for Your Humble EquityBot.
 This is the single entry point for all data fetching.
 Call DataManager().get(ticker) and receive a fully populated CompanyData object.
 
-Waterfall logic (stops as soon as data is "good enough"):
-  Tier 1a: yfinance         → always runs first (fast, global, free)
-  Tier 1b: SEC EDGAR        → runs for US tickers only (10-year depth)
-  Tier 1b: EODHD            → runs for non-US tickers (paid; accurate EU/global fundamentals)
-  Tier 2:  Alpha Vantage    → runs for non-US OR when <7 years of data remain
-  Tier 4:  FMP (paid)       → runs only if critical fields still missing
+Waterfall logic:
+  Tier 1a: yfinance         → always runs first (price, ratios, market data skeleton)
+  Tier 1b: SEC EDGAR        → US tickers only (10-year depth from SEC filings)
+  Tier 1b: EODHD            → non-US tickers (paid Fundamentals Feed; overrides yfinance
+                               annual data + balance sheet + EV ratios)
+  Tier 2:  Alpha Vantage    → fill-only if EODHD succeeded; override if EODHD failed;
+                               always runs for history gaps (<7 years)
+  Tier 4:  FMP (paid)       → runs only if critical fields still missing after Tiers 1-2
 
 Merge strategy:
-  - yfinance provides the market data skeleton (price, cap, ratios)
-  - EDGAR / Alpha Vantage fill in the 10-year annual history
-  - FMP fills any remaining gaps
+  - yfinance provides the market data skeleton (current price, shares, basic ratios)
+  - EODHD overrides ALL annual statement fields (income + balance + cash flow) for non-US
+  - EDGAR fills 10-year US history
+  - Alpha Vantage fills remaining gaps (fill-only when EODHD ran, override otherwise)
+  - FMP fills any remaining critical gaps
   - Calculated fields are derived last, after all sources are merged
 
 Caching:
@@ -177,40 +181,60 @@ class DataManager:
                 else:
                     logger.warning(f"[DataManager] EDGAR failed: {result.error}")
 
-        # ── Tier 1b: EODHD (non-US — high-quality European/global fundamentals) ──
-        # EODHD has accurate annual financials for all major global exchanges.
-        # Requires paid plan for fundamentals — falls back silently if on free tier.
+        # ── Tier 1b: EODHD (non-US — high-quality paid fundamentals) ────────────
+        # EODHD Fundamentals Data Feed provides accurate annual financials for all
+        # major global exchanges with 30+ years of history.
+        # When EODHD succeeds it becomes the definitive source for annual data —
+        # Alpha Vantage will only fill any remaining gaps (not override).
+        eodhd_succeeded = False
         if self._eodhd and not is_us_ticker:
             logger.info(f"[DataManager] Running EODHD for non-US {ticker}…")
             result = self._eodhd.fetch(ticker)
             if result.success and result.data:
-                # Override yfinance annual financials with EODHD's accurate data
-                self._merge(company, result.data, prefer_source="eodhd",
-                            fields=["annual_financials"], override_financials=True)
-                logger.info(f"[DataManager] After EODHD: {len(company.annual_financials)} years")
+                eodhd_succeeded = True
+                # Override yfinance annual financials + fill new scalar fields
+                # (forward_pe, ev_sales, ev_ebitda, price_to_book, roa, margins)
+                self._merge(
+                    company, result.data, prefer_source="eodhd",
+                    fields=[
+                        "annual_financials",
+                        "forward_pe", "price_to_book",
+                        "ev_sales", "ev_ebitda",
+                        "roa", "ebit_margin", "ebitda_margin", "gross_margin",
+                        "eps_estimate_next_year",
+                    ],
+                    override_financials=True,
+                    full_override=True,   # EODHD paid data: trust all statement types
+                )
+                logger.info(
+                    f"[DataManager] After EODHD: "
+                    f"{len(company.annual_financials)} years, "
+                    f"{company.completeness_pct()}% complete"
+                )
             else:
                 logger.info(f"[DataManager] EODHD skipped: {result.error}")
 
         # ── Tier 2: Alpha Vantage (non-US or still need more history) ─────────
-        # For non-US tickers we ALWAYS run Alpha Vantage when available, because
-        # yfinance frequently returns partial/incorrect annual data for European
-        # stocks (e.g. 9-month stub periods labeled as full fiscal years).
-        # Alpha Vantage data then OVERRIDES the yfinance annual financials rather
-        # than just filling gaps — this is the key correction.
+        # Priority rules:
+        #   • EODHD succeeded → AV runs fill-only (don't overwrite EODHD's data)
+        #   • EODHD failed    → AV overrides yfinance (old fallback behaviour)
+        #   • US ticker       → AV fills history gaps only
         if self._av and ENABLE_ALPHA_VANTAGE:
             needs_history = len(company.annual_financials) < MIN_HISTORY_YEARS
             run_av = needs_history or not is_us_ticker
             if run_av:
-                logger.info(f"[DataManager] Running Alpha Vantage for {ticker} "
-                            f"({'non-US override' if not is_us_ticker else f'need history, have {len(company.annual_financials)} yrs'})…")
+                # Only override yfinance if we're non-US AND EODHD didn't save us
+                av_override = not is_us_ticker and not eodhd_succeeded
+                logger.info(
+                    f"[DataManager] Running Alpha Vantage for {ticker} "
+                    f"({'fill-only' if not av_override else 'non-US override'}, "
+                    f"have {len(company.annual_financials)} years)…"
+                )
                 result = self._av.fetch(ticker)
                 if result.success and result.data:
-                    # For non-US: override yfinance annual financials with AV data
-                    # (AV has more reliable European annual statements)
-                    # For US with history gaps: fill-only merge as before
                     self._merge(company, result.data, prefer_source="alpha_vantage",
                                 fields=["annual_financials"],
-                                override_financials=not is_us_ticker)
+                                override_financials=av_override)
                     logger.info(f"[DataManager] After Alpha Vantage: "
                                 f"{len(company.annual_financials)} years")
                 else:
@@ -273,6 +297,7 @@ class DataManager:
         prefer_source: str,
         fields: List[str],
         override_financials: bool = False,
+        full_override: bool = False,
     ) -> None:
         """
         Merge fields from source into target (in-place).
@@ -280,11 +305,13 @@ class DataManager:
         For annual_financials:
           - override_financials=False (default): fill-only — copy source values
             into target only where target currently has None.
-          - override_financials=True: for each existing year, replace ALL income
-            statement fields from source (revenue, margins, net income, etc.)
-            so that a more reliable source (e.g. Alpha Vantage for non-US stocks)
-            overwrites potentially wrong yfinance data.  Balance-sheet and
-            market-data fields that yfinance already got right are preserved.
+          - override_financials=True, full_override=False: replace income-statement
+            fields (revenue, margins, net income, etc.) so that a more reliable
+            source overwrites potentially wrong yfinance data.  Balance-sheet
+            fields stay fill-only.
+          - override_financials=True, full_override=True: replace ALL fields
+            (income statement + balance sheet + cash flow) from source.
+            Use for EODHD paid data which is trusted for all statement types.
         For scalar fields: only copy if target field is None.
         """
         if "annual_financials" in fields:
@@ -293,9 +320,9 @@ class DataManager:
                     # New year — add it wholesale regardless of mode
                     target.annual_financials[year] = src_af
                 elif override_financials:
-                    # Override mode: replace income-statement fields from source
+                    # Override mode: replace fields from source
                     tgt_af = target.annual_financials[year]
-                    self._override_annual(tgt_af, src_af)
+                    self._override_annual(tgt_af, src_af, full_override=full_override)
                 else:
                     # Fill-only mode: only populate fields that are still None
                     tgt_af = target.annual_financials[year]
@@ -326,36 +353,46 @@ class DataManager:
             if getattr(target, f, None) is None and getattr(source, f, None) is not None:
                 setattr(target, f, getattr(source, f))
 
-    def _override_annual(self, target: AnnualFinancials, source: AnnualFinancials) -> None:
+    def _override_annual(
+        self,
+        target: AnnualFinancials,
+        source: AnnualFinancials,
+        full_override: bool = False,
+    ) -> None:
         """
-        Override income-statement fields in target with source values.
-        Used when a more reliable source (Alpha Vantage for non-US stocks)
-        should replace potentially wrong yfinance values.
+        Override annual financial fields in target with source values.
 
-        Income statement fields are fully replaced when source has a value.
-        Balance-sheet fields that yfinance typically gets right are left in
-        fill-only mode so we don't lose good data.
+        full_override=False (default):
+            Income-statement + cash flow fields are replaced unconditionally.
+            Balance-sheet fields are fill-only (yfinance usually has these right).
+            Use for Alpha Vantage (non-US fallback).
+
+        full_override=True:
+            ALL fields are replaced when source has a value.
+            Use for EODHD paid data which is trusted across all statement types.
         """
-        # These fields are replaced unconditionally when source has a non-None value
-        override_fields = [
+        # Income statement + cash flow: always override
+        income_cf_fields = [
             "revenue", "gross_profit", "ebitda", "ebit", "net_income",
             "eps_diluted", "dividends_per_share",
             "gross_margin", "ebit_margin", "ebitda_margin", "net_margin",
             "operating_cash_flow", "capex", "fcf",
         ]
-        for f in override_fields:
+        for f in income_cf_fields:
             src_val = getattr(source, f, None)
             if src_val is not None:
                 setattr(target, f, src_val)
 
-        # Balance sheet / per-share fields: fill-only (yfinance usually has these)
-        fill_fields = [
+        # Balance sheet: override unconditionally if full_override, else fill-only
+        balance_fields = [
             "total_assets", "total_debt", "cash", "net_debt", "total_equity",
             "shares_outstanding", "roe", "roa",
         ]
-        for f in fill_fields:
-            if getattr(target, f, None) is None and getattr(source, f, None) is not None:
-                setattr(target, f, getattr(source, f))
+        for f in balance_fields:
+            src_val = getattr(source, f, None)
+            if src_val is not None:
+                if full_override or getattr(target, f, None) is None:
+                    setattr(target, f, src_val)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Cache
