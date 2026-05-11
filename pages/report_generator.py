@@ -70,6 +70,33 @@ def _fmt_b(v) -> str:
     return f"{v/1000:,.1f}B" if abs(v) >= 1000 else f"{v:,.0f}M"
 
 
+def _show_token_usage(usage: dict) -> None:
+    """Display a compact token usage chip after an LLM call (Claude only)."""
+    if not usage:
+        return
+    inp   = usage.get("input_tokens", 0)
+    out   = usage.get("output_tokens", 0)
+    hit   = usage.get("cache_read_input_tokens", 0)
+    wrote = usage.get("cache_creation_input_tokens", 0)
+
+    if hit:
+        # Cache was warm — show savings
+        saved_pct = round(hit / max(inp + hit, 1) * 100)
+        st.caption(
+            f"🪙 Tokens — in: {inp:,} · out: {out:,} · "
+            f"📦 cache read: {hit:,} ({saved_pct}% saved) · "
+            f"cache write: {wrote:,}"
+        )
+    elif wrote:
+        # First call — schema written to cache for next run
+        st.caption(
+            f"🪙 Tokens — in: {inp:,} · out: {out:,} · "
+            f"📦 cache write: {wrote:,} (saved for next run)"
+        )
+    else:
+        st.caption(f"🪙 Tokens — in: {inp:,} · out: {out:,}")
+
+
 # ── Ticker search helper ──────────────────────────────────────────────────────
 def _search_tickers(query: str, max_results: int = 5) -> list[dict]:
     """
@@ -794,15 +821,18 @@ if generate_clicked and ticker_input:
 
             if report_type == "overview":
                 from models.overview import (
-                    _build_overview_prompt, _calculate_checklist,
-                    SYSTEM_PROMPT as SYS,
+                    _build_overview_prompt, _overview_prompt_parts,
+                    _calculate_checklist, SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_overview_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
+                cacheable_pfx, dynamic_prompt = _overview_prompt_parts(
+                    company, news_block=_news_block, macro_country_block=_country_macro_block
+                )
 
                 if adversarial_on:
                     _prog.progress(25, text="⚔  Step 1/4: Claude analysis…")
                     st.write("   → Step 1/4: Claude analysis...")
-                    adv_result = _adv_engine.run(prompt, SYS, max_tokens=5000,
+                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
+                    adv_result = _adv_engine.run(full_prompt, SYS, max_tokens=5000,
                                                   report_type="overview")
                     analysis = adv_result.merged
                     rec_note = (
@@ -814,9 +844,11 @@ if generate_clicked and ticker_input:
                     st.write(f"   Consensus: {len(adv_result.consensus_fields)} fields  ·  "
                              f"Contested: {len(adv_result.contested_fields)} fields")
                 else:
-                    analysis = llm.generate_json(prompt, SYS, max_tokens=5000)
+                    analysis = llm.generate_json(dynamic_prompt, SYS, max_tokens=5000,
+                                                 cacheable_prefix=cacheable_pfx)
                     rec = analysis.get("recommendation", "n/a")
                     st.write(f"✓  Recommendation: **{rec}**")
+                    _show_token_usage(llm.last_usage)
                 _prog.progress(65, text="✓  AI analysis complete")
 
                 # ── Step 3: Peers ─────────────────────────────────────────────
@@ -859,13 +891,16 @@ if generate_clicked and ticker_input:
 
             elif report_type == "fisher":
                 from models.fisher import (
-                    _build_fisher_prompt, _validate_analysis,
-                    SYSTEM_PROMPT as SYS,
+                    _build_fisher_prompt, _fisher_prompt_parts,
+                    _validate_analysis, SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_fisher_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
+                cacheable_pfx, dynamic_prompt = _fisher_prompt_parts(
+                    company, news_block=_news_block, macro_country_block=_country_macro_block
+                )
 
                 if adversarial_on:
-                    adv_result = _adv_engine.run(prompt, SYS, max_tokens=6000,
+                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
+                    adv_result = _adv_engine.run(full_prompt, SYS, max_tokens=6000,
                                                   report_type="fisher")
                     analysis = _validate_analysis(adv_result.merged)
                     score = analysis.get("fisher_total_score", "?")
@@ -876,12 +911,14 @@ if generate_clicked and ticker_input:
                     st.write(f"   Consensus: {len(adv_result.consensus_fields)} fields  ·  "
                              f"Contested: {len(adv_result.contested_fields)} fields")
                 else:
-                    analysis = llm.generate_json(prompt, SYS, max_tokens=6000)
+                    analysis = llm.generate_json(dynamic_prompt, SYS, max_tokens=6000,
+                                                 cacheable_prefix=cacheable_pfx)
                     analysis = _validate_analysis(analysis)
                     score = analysis.get("fisher_total_score", "?")
                     grade = analysis.get("fisher_grade", "?")
                     rec   = analysis.get("recommendation", "n/a")
                     st.write(f"✓  Fisher Score: **{score}/75** (Grade {grade}) · Rec: **{rec}**")
+                    _show_token_usage(llm.last_usage)
                 _prog.progress(75, text="✓  Fisher analysis complete")
 
                 _prog.progress(88, text="📄  Rendering PDF…")
@@ -926,13 +963,16 @@ if generate_clicked and ticker_input:
 
             else:  # gravity
                 from models.gravity import (
-                    _build_gravity_prompt, _validate_analysis,
-                    SYSTEM_PROMPT as SYS,
+                    _build_gravity_prompt, _gravity_prompt_parts,
+                    _validate_analysis, SYSTEM_PROMPT as SYS,
                 )
-                prompt = _build_gravity_prompt(company, news_block=_news_block, macro_country_block=_country_macro_block)
+                cacheable_pfx, dynamic_prompt = _gravity_prompt_parts(
+                    company, news_block=_news_block, macro_country_block=_country_macro_block
+                )
 
                 if adversarial_on:
-                    adv_result = _adv_engine.run(prompt, SYS, max_tokens=6000,
+                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
+                    adv_result = _adv_engine.run(full_prompt, SYS, max_tokens=6000,
                                                   report_type="gravity")
                     analysis = _validate_analysis(adv_result.merged)
                     score = analysis.get("total_gravity_score", "?")
@@ -944,7 +984,8 @@ if generate_clicked and ticker_input:
                              f"GPT-4o: {adv_result.secondary_rec}  ·  "
                              f"Contested: {len(adv_result.contested_fields)} fields")
                 else:
-                    analysis = llm.generate_json(prompt, SYS, max_tokens=6000)
+                    analysis = llm.generate_json(dynamic_prompt, SYS, max_tokens=6000,
+                                                 cacheable_prefix=cacheable_pfx)
                     analysis = _validate_analysis(analysis)
                     score = analysis.get("total_gravity_score", "?")
                     grade = analysis.get("gravity_grade", "?")
@@ -952,6 +993,7 @@ if generate_clicked and ticker_input:
                     pp    = analysis.get("revenue_model", {}).get("pricing_power", "?")
                     st.write(f"✓  Gravity Score: **{score}/50** (Grade {grade}) · "
                              f"Pricing Power: {pp} · Rec: **{rec}**")
+                    _show_token_usage(llm.last_usage)
                 _prog.progress(75, text="✓  Gravity analysis complete")
 
                 _prog.progress(88, text="📄  Rendering PDF…")

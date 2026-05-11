@@ -144,6 +144,92 @@ HELMER_POWERS = [
 ]
 
 
+# ── Cached prompt prefix — built once at module load ─────────────────────────
+# Includes all 15 Fisher questions + 7 Helmer powers + output schema.
+# ~1400+ tokens of fixed content: qualifies for Anthropic's 1024-token cache
+# threshold (combined with the ~256-token system prompt).
+
+def _build_fisher_fixed_block() -> str:
+    fisher_q = "\n".join(
+        f"  Point {n:02d} — {title}: {question}"
+        for n, title, question in FISHER_QUESTIONS
+    )
+    helmer_q = "\n".join(
+        f"  {name}: {question}"
+        for name, question in HELMER_POWERS
+    )
+    return f"""\
+Perform a deep-dive Fisher Alternatives analysis for the company data provided below.
+Apply Philip Fisher's 15-point framework and Hamilton Helmer's 7 Powers rigorously.
+Return a single JSON object with exactly the structure shown.
+
+== FISHER 15-POINT QUESTIONS ==
+{fisher_q}
+
+== HELMER 7 POWERS QUESTIONS ==
+{helmer_q}
+
+Required JSON output:
+{{
+  "business_overview": "250-350 word overview of the business model, competitive position, and what makes this company structurally interesting (or not) to a long-term owner. Cover: what they sell, to whom, the value-chain position, pricing power evidence, and capital intensity. Be specific and factual.",
+
+  "fisher_points": [
+    {{
+      "number": 1,
+      "title": "Market Growth Potential",
+      "score": "<integer 1-5>",
+      "assessment": "<PASS|PARTIAL|FAIL>",
+      "rationale": "2-3 sentences. Be specific — cite growth rates, market sizes, or product trends from the data where possible. Score 5 = outstanding, 3 = average, 1 = poor."
+    }},
+    "... (repeat for all 15 points, numbers 1-15)"
+  ],
+
+  "fisher_total_score": "<integer, sum of all 15 scores, max 75>",
+  "fisher_grade": "<A|B|C|D|F — A=65+, B=55-64, C=45-54, D=35-44, F=<35>",
+  "fisher_summary": "100-150 word synthesis of the Fisher assessment. What are the 2-3 strongest points? What are the critical weaknesses? What does the total score tell a long-term investor?",
+
+  "powers": [
+    {{
+      "name": "Scale Economies",
+      "strength": "<Strong|Moderate|Weak|None>",
+      "rationale": "2-3 sentences. Explain the mechanism or explain why this power is absent. Be honest — most companies do not have all 7 powers."
+    }},
+    "... (repeat for all 7 powers in order: Scale Economies, Network Economies, Counter-Positioning, Switching Costs, Branding, Cornered Resource, Process Power)"
+  ],
+
+  "active_powers_count": "<integer 0-7, count of powers rated Strong or Moderate>",
+  "moat_width": "<Wide|Narrow|None>",
+  "moat_rationale": "100-150 word moat assessment. Which specific powers drive the moat? How durable are they over a 10-year horizon? What could erode them?",
+
+  "key_risks": [
+    "Specific risk 1 — concise, actionable statement (not generic 'market risk')",
+    "Specific risk 2",
+    "Specific risk 3",
+    "Specific risk 4"
+  ],
+
+  "conclusion": "200-300 word investment conclusion from a Fisher/Helmer perspective. Synthesise the 15-point score, the powers analysis, and current valuation. Is this a business worth owning at any price? At the current price? What would need to be true for this to be a 10-year compounder? Avoid repeating the moat rationale verbatim.",
+
+  "recommendation": "<BUY|HOLD|SELL>",
+  "recommendation_rationale": "100-150 word rationale grounded in the Fisher/Helmer analysis above. Reference the specific score, the dominant power (or lack thereof), and the valuation context. State what condition or price changes the recommendation."
+}}
+
+Scoring calibration:
+- Score 5: Exceptional — this criterion is a clear competitive strength
+- Score 4: Above average — clear evidence of quality above peers
+- Score 3: Average — meets the bar, not a standout
+- Score 2: Below average — visible weaknesses
+- Score 1: Poor — a genuine concern that investors should flag
+
+All 15 fisher_points entries must be present (numbers 1-15) and all 7 powers entries must be present.
+
+=== COMPANY DATA FOLLOWS ==="""
+
+
+# Precomputed once at import time — never changes between runs
+_FISHER_CACHEABLE = _build_fisher_fixed_block()
+
+
 # ── Financial data formatter ───────────────────────────────────────────────────
 
 def _format_financials_for_llm(company: CompanyData) -> str:
@@ -218,95 +304,38 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompt builder ─────────────────────────────────────────────────────────
 
-def _build_fisher_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+def _fisher_prompt_parts(
+    company: CompanyData,
+    news_block: str = "",
+    macro_country_block: str = "",
+) -> tuple[str, str]:
+    """
+    Return (cacheable_prefix, dynamic_content).
+
+    cacheable_prefix  — all 15 Fisher questions + 7 Powers + full output schema.
+                        ~1400 tokens — qualifies for Anthropic prompt caching.
+    dynamic_content   — company financials, macro, news (changes per company).
+    """
     fin_data = _format_financials_for_llm(company)
     cur = company.currency or "USD"
-
-    # Build the Fisher questions block for the prompt
-    fisher_q_block = "\n".join(
-        f"  Point {n:02d} — {title}: {question}"
-        for n, title, question in FISHER_QUESTIONS
-    )
-
-    helmer_q_block = "\n".join(
-        f"  {name}: {question}"
-        for name, question in HELMER_POWERS
-    )
 
     from data_sources.fred_adapter import get_macro_block
     macro_block = get_macro_block()
     macro_section = f"\n\n{macro_block}" if macro_block else ""
-
     news_section = f"\n\n{news_block}" if news_block else ""
     country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
 
-    return f"""Perform a deep-dive Fisher Alternatives analysis for the company below.
-Apply Philip Fisher's 15-point framework and Hamilton Helmer's 7 Powers rigorously.
-Return a single JSON object with exactly the structure shown.
+    dynamic = (
+        f"{fin_data}{macro_section}{news_section}{country_macro_section}\n\n"
+        f"Currency is {cur}. Do not invent data not in the financial block above."
+    )
+    return _FISHER_CACHEABLE, dynamic
 
-{fin_data}{macro_section}{news_section}{country_macro_section}
 
-== FISHER 15-POINT QUESTIONS ==
-{fisher_q_block}
-
-== HELMER 7 POWERS QUESTIONS ==
-{helmer_q_block}
-
-Required JSON output:
-{{
-  "business_overview": "250-350 word overview of the business model, competitive position, and what makes this company structurally interesting (or not) to a long-term owner. Cover: what they sell, to whom, the value-chain position, pricing power evidence, and capital intensity. Be specific and factual.",
-
-  "fisher_points": [
-    {{
-      "number": 1,
-      "title": "Market Growth Potential",
-      "score": <integer 1-5>,
-      "assessment": "<PASS|PARTIAL|FAIL>",
-      "rationale": "2-3 sentences. Be specific — cite growth rates, market sizes, or product trends from the data where possible. Score 5 = outstanding, 3 = average, 1 = poor."
-    }},
-    ... (repeat for all 15 points, numbers 1-15)
-  ],
-
-  "fisher_total_score": <integer, sum of all 15 scores, max 75>,
-  "fisher_grade": "<A|B|C|D|F — A=65+, B=55-64, C=45-54, D=35-44, F=<35>",
-  "fisher_summary": "100-150 word synthesis of the Fisher assessment. What are the 2-3 strongest points? What are the critical weaknesses? What does the total score tell a long-term investor?",
-
-  "powers": [
-    {{
-      "name": "Scale Economies",
-      "strength": "<Strong|Moderate|Weak|None>",
-      "rationale": "2-3 sentences. Explain the mechanism or explain why this power is absent. Be honest — most companies do not have all 7 powers."
-    }},
-    ... (repeat for all 7 powers in order: Scale Economies, Network Economies, Counter-Positioning, Switching Costs, Branding, Cornered Resource, Process Power)
-  ],
-
-  "active_powers_count": <integer 0-7, count of powers rated Strong or Moderate>,
-  "moat_width": "<Wide|Narrow|None>",
-  "moat_rationale": "100-150 word moat assessment. Which specific powers drive the moat? How durable are they over a 10-year horizon? What could erode them?",
-
-  "key_risks": [
-    "Specific risk 1 — concise, actionable statement (not generic 'market risk')",
-    "Specific risk 2",
-    "Specific risk 3",
-    "Specific risk 4"
-  ],
-
-  "conclusion": "200-300 word investment conclusion from a Fisher/Helmer perspective. Synthesise the 15-point score, the powers analysis, and current valuation. Is this a business worth owning at any price? At the current price? What would need to be true for this to be a 10-year compounder? Avoid repeating the moat rationale verbatim.",
-
-  "recommendation": "<BUY|HOLD|SELL>",
-  "recommendation_rationale": "100-150 word rationale grounded in the Fisher/Helmer analysis above. Reference the specific score, the dominant power (or lack thereof), and the valuation context. State what condition or price changes the recommendation."
-}}
-
-Scoring calibration:
-- Score 5: Exceptional — this criterion is a clear competitive strength
-- Score 4: Above average — clear evidence of quality above peers
-- Score 3: Average — meets the bar, not a standout
-- Score 2: Below average — visible weaknesses
-- Score 1: Poor — a genuine concern that investors should flag
-
-All 15 fisher_points entries must be present (numbers 1-15) and all 7 powers entries must be present.
-Currency is {cur}. Do not invent data not in the financial block above.
-"""
+def _build_fisher_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+    """Return the full prompt as a single string (used by adversarial mode)."""
+    cacheable, dynamic = _fisher_prompt_parts(company, news_block, macro_country_block)
+    return cacheable + "\n\n" + dynamic
 
 
 # ── Helper formatters ─────────────────────────────────────────────────────────

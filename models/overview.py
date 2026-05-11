@@ -158,24 +158,16 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompts ───────────────────────────────────────────────────────────────
 
-def _build_overview_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
-    fin_data = _format_financials_for_llm(company)
-    cur = company.currency or "USD"
-
-    from data_sources.fred_adapter import get_macro_block
-    macro_block = get_macro_block()
-    macro_section = f"\n\n{macro_block}" if macro_block else ""
-
-    news_section = f"\n\n{news_block}" if news_block else ""
-    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
-
-    return f"""Produce a full Investment Memo analysis for the company below.
+# ── Cached prompt prefix — fixed framework instructions + output schema ────────
+# This block never changes regardless of which company is analysed, so Anthropic
+# can cache it after the first call (5-minute TTL, 90% cost reduction on re-reads).
+# It must be > 1024 tokens combined with the system prompt to qualify for caching.
+_OVERVIEW_CACHEABLE = """\
+Produce a full Investment Memo analysis for the company data provided below.
 Return a single JSON object with exactly these keys.
 
-{fin_data}{macro_section}{news_section}{country_macro_section}
-
 Required JSON output:
-{{
+{
   "snapshot": "800-1000 word Investment Snapshot. Cover: (1) business model and what the company actually does, (2) industry structure and value chain position, (3) competitive moat — be specific about sources, (4) key growth drivers and risks to them, (5) capital allocation quality and management track record, (6) current financial highlights and what has driven recent results. Write as a senior analyst briefing a long-term investor. Be factual, no padding.",
 
   "fun_facts": [
@@ -193,21 +185,73 @@ Required JSON output:
   "recommendation_rationale": "100-150 word rationale. State the key decision variable: what price or condition makes this attractive/unattractive. Include a rough fair value range if calculable from the data. Reference the most important financial metric that drives your view.",
 
   "suggested_peers": [
-    {{"ticker": "PEER1.EX", "name": "Peer Company Name", "exchange": "EXCHANGE_CODE"}},
-    {{"ticker": "PEER2", "name": "Peer 2", "exchange": "NYSE"}},
-    {{"ticker": "PEER3.EX", "name": "Peer 3", "exchange": "EXCHANGE_CODE"}},
-    {{"ticker": "PEER4.EX", "name": "Peer 4", "exchange": "EXCHANGE_CODE"}}
+    {"ticker": "PEER1.EX", "name": "Peer Company Name", "exchange": "EXCHANGE_CODE"},
+    {"ticker": "PEER2",    "name": "Peer 2",             "exchange": "NYSE"},
+    {"ticker": "PEER3.EX", "name": "Peer 3",             "exchange": "EXCHANGE_CODE"},
+    {"ticker": "PEER4.EX", "name": "Peer 4",             "exchange": "EXCHANGE_CODE"}
   ]
-}}
+}
 
 Rules:
-- suggested_peers: 4-6 most relevant direct competitors or closest sector comparables. Use Yahoo Finance ticker format (e.g. RELX.L for London, SAP.DE for Frankfurt, WKL.AS for Amsterdam).
-- All numbers you reference must come from the financial data provided above — do not invent figures.
-- Currency is {cur} throughout.
+- suggested_peers: 4-6 most relevant direct competitors or closest sector comparables.
+  Use Yahoo Finance ticker format (e.g. RELX.L for London, SAP.DE for Frankfurt, WKL.AS for Amsterdam).
+- All numbers you reference must come from the financial data provided — do not invent figures.
 - Write in English. Professional analyst tone. No bullet points inside the text fields — prose only.
-- If RECENT NEWS is provided, incorporate the most relevant developments into snapshot, bull_case, and bear_case. Do not fabricate news items.
-- If COUNTRY MACRO data is provided, use it to contextualize the operating environment in the snapshot and bear_case.
-"""
+- If RECENT NEWS is provided, incorporate the most relevant developments into snapshot,
+  bull_case, and bear_case. Do not fabricate news items.
+- If COUNTRY MACRO data is provided, use it to contextualize the operating environment
+  in the snapshot and bear_case.
+
+Analytical standards:
+- Moat claims must cite specific evidence: pricing power data, market share trends,
+  switching cost analysis, or network effect metrics. "Wide moat" unsupported by data
+  is not acceptable.
+- Valuation commentary must anchor to the specific multiples in the financial block.
+  Generic statements like "trading at a discount" are not acceptable without citing
+  the actual P/E, EV/EBIT, or FCF yield versus historical or peer averages.
+- The bear case must be genuinely adversarial — if the bear case reads like a bull
+  case with mild caveats, it has failed. Stress-test the thesis properly.
+- Recommendation must be actionable and grounded: BUY means you believe the risk/reward
+  is favourable at the current price. HOLD means fair value is approximately reached.
+  SELL means the current price embeds too much optimism or the thesis is broken.
+
+=== COMPANY DATA FOLLOWS ==="""
+
+
+def _overview_prompt_parts(
+    company: CompanyData,
+    news_block: str = "",
+    macro_country_block: str = "",
+) -> tuple[str, str]:
+    """
+    Return (cacheable_prefix, dynamic_content).
+
+    cacheable_prefix  — fixed framework instructions + schema (same for every company).
+                        Pass as cacheable_prefix= to llm.generate_json() so Anthropic
+                        caches it and re-reads at 90% discount on subsequent calls.
+    dynamic_content   — company-specific financials, macro, news.
+    """
+    fin_data = _format_financials_for_llm(company)
+    cur = company.currency or "USD"
+
+    from data_sources.fred_adapter import get_macro_block
+    macro_block = get_macro_block()
+    macro_section = f"\n\n{macro_block}" if macro_block else ""
+    news_section = f"\n\n{news_block}" if news_block else ""
+    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
+
+    dynamic = (
+        f"{fin_data}{macro_section}{news_section}{country_macro_section}\n\n"
+        f"Currency is {cur} throughout.\n"
+        f"Analyze the company data above and return the JSON."
+    )
+    return _OVERVIEW_CACHEABLE, dynamic
+
+
+def _build_overview_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+    """Return the full prompt as a single string (used by adversarial mode)."""
+    cacheable, dynamic = _overview_prompt_parts(company, news_block, macro_country_block)
+    return cacheable + "\n\n" + dynamic
 
 
 # ── Checklist calculator ──────────────────────────────────────────────────────

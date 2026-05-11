@@ -114,8 +114,13 @@ class UniverseScreener:
 
         # ── Call Claude ────────────────────────────────────────────────────────
         _prog(60, f"Running {fw.name} analysis across {loaded} companies — typically 60–120 s…")
-        raw = _call_claude(fw.system_prompt, prompt)
-        _prog(88, "Analysis complete — rendering report…")
+        raw, usage = _call_claude(fw.system_prompt, prompt)
+        cache_hit = usage.get("cache_read_input_tokens", 0)
+        if cache_hit:
+            _prog(88, f"Analysis complete (cache hit: {cache_hit:,} tokens saved) — rendering report…")
+        else:
+            _prog(88, "Analysis complete — rendering report…")
+        logger.info(f"[UniverseScreener] Token usage: {usage}")
 
         # ── Parse + render ─────────────────────────────────────────────────────
         analysis = _parse_json(raw)
@@ -186,18 +191,12 @@ def _build_universe_prompt(fw, index_ticker: str, companies: dict) -> str:
         macro_block = ""
     macro_section = f"\n{macro_block}\n" if macro_block else ""
 
-    # Get framework scoring criteria from its system prompt (abbreviated)
-    sys_excerpt = fw.system_prompt[:1200] + (
-        "\n[...framework continues...]"
-        if len(fw.system_prompt) > 1200 else ""
-    )
+    # NOTE: sys_excerpt removed — the full framework system_prompt is already
+    # passed as the system message in _call_claude(), so duplicating it here
+    # wastes ~300 tokens per universe call.
 
     return f"""You are screening the constituents of {index_ticker} through the {fw.name} framework.
 {macro_section}
-
-FRAMEWORK CRITERIA (abridged):
-{sys_excerpt}
-
 UNIVERSE — {len(companies)} companies with key financial metrics:
 {financials_block}
 
@@ -219,7 +218,7 @@ JSON schema:
       "rank": 1,
       "ticker": "<Yahoo Finance ticker>",
       "name": "<company name>",
-      "score": <float 1.0–10.0>,
+      "score": "<float 1.0-10.0>",
       "choke_point_or_moat": "<key structural advantage>",
       "unavoidable_flow_or_thesis": "<what recurring flow or investment thesis applies>",
       "revenue_model": "<brief description>",
@@ -247,19 +246,47 @@ JSON schema:
 
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
-def _call_claude(system_prompt: str, prompt: str) -> str:
+def _call_claude(system_prompt: str, prompt: str) -> tuple[str, dict]:
+    """
+    Call Claude and return (response_text, usage_dict).
+    System prompt is marked cacheable so repeated calls for the same framework
+    benefit from Anthropic's prompt cache (90% read discount).
+    usage_dict keys: input_tokens, output_tokens,
+                     cache_creation_input_tokens, cache_read_input_tokens.
+    """
     from config import ANTHROPIC_API_KEY, LLM_MODEL
     import anthropic
 
-    client  = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # Mark the framework system prompt cacheable.
+    # The 1024-token threshold is checked against (system + any cached user blocks).
+    # Framework system prompts are 180–326 tokens, which is below the threshold on
+    # their own, but Anthropic will silently skip caching rather than error.
+    system_content = [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
     message = client.messages.create(
         model=LLM_MODEL,
         max_tokens=8000,
         temperature=0.3,
-        system=system_prompt,
+        system=system_content,
         messages=[{"role": "user", "content": prompt}],
     )
-    return message.content[0].text
+
+    u = message.usage
+    usage = {
+        "input_tokens":               u.input_tokens,
+        "output_tokens":              u.output_tokens,
+        "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+        "cache_read_input_tokens":     getattr(u, "cache_read_input_tokens",     0) or 0,
+    }
+    return message.content[0].text, usage
 
 
 # ── JSON parser ───────────────────────────────────────────────────────────────

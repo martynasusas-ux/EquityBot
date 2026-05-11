@@ -30,11 +30,22 @@ class LLMClient:
         client = LLMClient()
         text   = client.generate(user_prompt, system_prompt)
         parsed = client.generate_json(user_prompt, system_prompt)
+
+    Prompt caching (Claude only):
+        Pass cacheable_prefix=<fixed_text> to generate()/generate_json().
+        The prefix is sent as a separate content block marked cache_control:ephemeral.
+        Anthropic caches it for 5 minutes — 90% cost reduction on re-reads.
+        Requires ≥ 1024 tokens in the prefix + system prompt combined.
+
+    Token usage:
+        After each Claude call, self.last_usage is populated:
+        {input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens}
     """
 
     def __init__(self, provider: str = "", model: str = ""):
-        self.provider = provider or LLM_PROVIDER
-        self.model    = model    or LLM_MODEL
+        self.provider   = provider or LLM_PROVIDER
+        self.model      = model    or LLM_MODEL
+        self.last_usage: dict = {}   # populated after each Claude call
 
         if not self._api_key():
             logger.warning(
@@ -50,25 +61,38 @@ class LLMClient:
         system_prompt: str = "",
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        cacheable_prefix: str = "",
     ) -> str:
         """
         Generate a text response from the configured LLM.
         Temperature 0.3 = creative but consistent (good for analyst reports).
+
+        cacheable_prefix: fixed text sent before user_prompt as a separate content
+        block with cache_control:ephemeral (Claude only). Use this for the framework
+        instructions / output schema portion of the prompt — it stays the same across
+        runs of the same framework, so Anthropic can cache and re-read it cheaply.
         """
         start = time.time()
         logger.info(f"[LLMClient] Calling {self.provider}/{self.model} "
-                    f"(~{len(user_prompt)//4} tokens in)…")
+                    f"(~{(len(cacheable_prefix)+len(user_prompt))//4} tokens in)…")
 
         if self.provider == "claude":
-            result = self._claude(user_prompt, system_prompt, max_tokens, temperature)
+            result = self._claude(user_prompt, system_prompt, max_tokens, temperature,
+                                  cacheable_prefix)
         elif self.provider == "openai":
             result = self._openai(user_prompt, system_prompt, max_tokens, temperature)
         else:
             raise ValueError(f"Unknown LLM provider: '{self.provider}'. "
                              f"Set LLM_PROVIDER=claude or LLM_PROVIDER=openai in .env")
 
-        logger.info(f"[LLMClient] Response: ~{len(result)//4} tokens, "
-                    f"{time.time()-start:.1f}s")
+        elapsed = time.time() - start
+        u = self.last_usage
+        cache_hit = u.get("cache_read_input_tokens", 0)
+        cache_new = u.get("cache_creation_input_tokens", 0)
+        logger.info(
+            f"[LLMClient] Response: ~{len(result)//4} tokens out, {elapsed:.1f}s"
+            + (f" | cache_hit={cache_hit} cache_write={cache_new}" if (cache_hit or cache_new) else "")
+        )
         return result
 
     def generate_json(
@@ -76,18 +100,22 @@ class LLMClient:
         user_prompt: str,
         system_prompt: str = "",
         max_tokens: int = 4096,
+        cacheable_prefix: str = "",
     ) -> dict:
         """
         Generate and parse a JSON response.
         Automatically handles markdown code blocks and minor formatting issues.
         Falls back to empty dict on parse failure with an error log.
+
+        cacheable_prefix: see generate() — passed through unchanged.
         """
         # Ask explicitly for JSON output
         json_instruction = (
             "\n\nIMPORTANT: Return ONLY valid JSON. "
             "No markdown, no code blocks, no commentary before or after the JSON object."
         )
-        raw = self.generate(user_prompt + json_instruction, system_prompt, max_tokens)
+        raw = self.generate(user_prompt + json_instruction, system_prompt, max_tokens,
+                            cacheable_prefix=cacheable_prefix)
 
         # Strip any markdown code fences the model might add despite instructions
         cleaned = _strip_code_fences(raw)
@@ -132,7 +160,12 @@ class LLMClient:
     # ── Provider implementations ──────────────────────────────────────────────
 
     def _claude(
-        self, user_prompt: str, system_prompt: str, max_tokens: int, temperature: float
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        max_tokens: int,
+        temperature: float,
+        cacheable_prefix: str = "",
     ) -> str:
         try:
             import anthropic
@@ -147,17 +180,60 @@ class LLMClient:
             )
 
         client = anthropic.Anthropic(api_key=key)
-        kwargs = dict(
+
+        # ── Build user content (multi-block when caching) ─────────────────────
+        if cacheable_prefix:
+            # Split into: [fixed framework instructions (cached)] + [variable company data]
+            user_content = [
+                {
+                    "type": "text",
+                    "text": cacheable_prefix,
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": user_prompt,
+                },
+            ]
+        else:
+            user_content = user_prompt
+
+        # ── Build system content ──────────────────────────────────────────────
+        # Mark the system prompt cacheable too when we're in caching mode —
+        # the combined (system + cacheable_prefix) token count is what
+        # Anthropic checks against the 1024-token minimum cache threshold.
+        if system_prompt and cacheable_prefix:
+            system_content = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        elif system_prompt:
+            system_content = system_prompt
+        else:
+            system_content = None
+
+        kwargs: dict = dict(
             model=self.model,
             max_tokens=max_tokens,
             temperature=temperature,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[{"role": "user", "content": user_content}],
         )
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        if system_content is not None:
+            kwargs["system"] = system_content
 
         try:
             msg = client.messages.create(**kwargs)
+            # ── Track token usage (includes cache stats) ──────────────────────
+            u = msg.usage
+            self.last_usage = {
+                "input_tokens":               u.input_tokens,
+                "output_tokens":              u.output_tokens,
+                "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+                "cache_read_input_tokens":     getattr(u, "cache_read_input_tokens",     0) or 0,
+            }
             return msg.content[0].text
         except anthropic.AuthenticationError:
             raise RuntimeError(
@@ -171,7 +247,12 @@ class LLMClient:
             raise RuntimeError(f"Claude API error: {e}")
 
     def _openai(
-        self, user_prompt: str, system_prompt: str, max_tokens: int, temperature: float
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        max_tokens: int,
+        temperature: float,
+        cacheable_prefix: str = "",   # ignored — OpenAI has its own caching
     ) -> str:
         try:
             from openai import OpenAI

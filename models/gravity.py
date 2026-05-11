@@ -132,6 +132,85 @@ GRAVITY_DIMENSIONS = [
 ]
 
 
+# ── Cached prompt prefix — built once at module load ─────────────────────────
+# Includes all 10 Gravity dimensions + full output schema.
+# ~1200+ tokens of fixed content: qualifies for Anthropic's 1024-token cache
+# threshold (combined with the ~326-token system prompt).
+
+def _build_gravity_fixed_block() -> str:
+    dims = "\n".join(
+        f"  Dimension {n:02d} — {title}:\n  {question}"
+        for n, title, question in GRAVITY_DIMENSIONS
+    )
+    return f"""\
+Perform a Gravity Taxers analysis for the company data provided below.
+A "Gravity Taxer" is a business that occupies an essential choke point in a value chain
+and extracts a durable, recurring toll from economic activity flowing through it.
+Score the company on 10 structural dimensions of choke-point strength.
+Return a single JSON object with exactly the structure shown.
+
+== GRAVITY DIMENSIONS TO SCORE ==
+{dims}
+
+Required JSON output:
+{{
+  "gravity_profile": "200-300 word description of this company as a potential Gravity Taxer. Cover: (1) what economic flow it sits at the centre of, (2) why customers cannot easily bypass it, (3) evidence of toll-extraction in the financials (margin trends, pricing history, recurring revenue), (4) how it compares in character to canonical choke-point businesses like Visa, Moody's, or MSCI. Be specific and critical — not all businesses qualify.",
+
+  "revenue_model": {{
+    "recurring_pct_estimate": "<integer 0-100, estimated % of revenue that is recurring or subscription>",
+    "revenue_visibility": "<High|Medium|Low>",
+    "pricing_power": "<Strong|Moderate|Weak>",
+    "capex_intensity": "<Asset-Light|Moderate|Capital-Heavy>",
+    "pricing_evidence": "2-3 sentences describing specific evidence of pricing power from the financial data: price increases, ARPU trends, margin expansion, or lack thereof."
+  }},
+
+  "gravity_dimensions": [
+    {{
+      "number": 1,
+      "title": "Value Chain Essentialness",
+      "score": "<integer 1-5>",
+      "rationale": "2-3 sentences. Cite specific evidence. Score 5 = near-irreplaceable, 3 = important but substitutable, 1 = easily bypassed."
+    }},
+    "... (repeat for all 10 dimensions, numbers 1-10)"
+  ],
+
+  "total_gravity_score": "<integer, sum of all 10 scores, max 50>",
+  "gravity_grade": "<A|B|C|D|F — A=45+, B=38+, C=30+, D=22+, F<22>",
+  "gravity_summary": "100-150 word synthesis. Is this a genuine Gravity Taxer? Where does it sit on the spectrum from pure toll-booth to commoditised service provider? What would need to change for it to score higher?",
+
+  "canonical_comparison": "100-150 word comparison to the canonical set of Gravity Taxers (Visa, Mastercard, Moody's, S&P Global, MSCI, FactSet, Verisk, CoStar, Wolters Kluwer, RELX, Bloomberg, SS&C). How does this company's choke-point strength compare? Is it in the same league, a tier below, or categorically different?",
+
+  "revenue_flywheel": "100-150 word description of any self-reinforcing dynamics in the revenue model. Does accumulated data, installed base, or network density create a flywheel that makes the toll booth progressively harder to compete with? Or is it a static advantage without compounding characteristics?",
+
+  "key_risks": [
+    "Specific risk 1 — what structural change could undermine the choke-point position?",
+    "Specific risk 2 — pricing or competitive risk",
+    "Specific risk 3 — technology disruption or disintermediation risk",
+    "Specific risk 4 — regulatory or macro risk"
+  ],
+
+  "conclusion": "200-300 word investment conclusion from the Gravity Taxer perspective. Synthesise the gravity score, revenue model quality, and current valuation. Is this a business worth paying a premium for? What is the margin of safety at current prices? What specific condition or metric would change the investment case?",
+
+  "recommendation": "<BUY|HOLD|SELL>",
+  "recommendation_rationale": "100-150 word rationale grounded in the gravity analysis. Reference the gravity score, the dominant choke-point characteristic, and whether the current valuation reflects the quality of the toll booth. State the key upside and downside triggers."
+}}
+
+Scoring calibration:
+- Score 5: Exceptional — near-perfect expression of this dimension (e.g. Visa on Switching Costs)
+- Score 4: Above average — clear advantage, durable
+- Score 3: Average — meets the bar, not a standout
+- Score 2: Below average — visible weakness
+- Score 1: Poor — this dimension actively hurts the investment case
+
+All 10 gravity_dimensions entries must be present (numbers 1-10).
+
+=== COMPANY DATA FOLLOWS ==="""
+
+
+# Precomputed once at import time — never changes between runs
+_GRAVITY_CACHEABLE = _build_gravity_fixed_block()
+
+
 # ── Financial data formatter ──────────────────────────────────────────────────
 
 def _format_financials_for_llm(company: CompanyData) -> str:
@@ -207,86 +286,38 @@ def _format_financials_for_llm(company: CompanyData) -> str:
 
 # ── LLM prompt builder ────────────────────────────────────────────────────────
 
-def _build_gravity_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+def _gravity_prompt_parts(
+    company: CompanyData,
+    news_block: str = "",
+    macro_country_block: str = "",
+) -> tuple[str, str]:
+    """
+    Return (cacheable_prefix, dynamic_content).
+
+    cacheable_prefix  — all 10 Gravity dimensions + full output schema.
+                        ~1200 tokens — qualifies for Anthropic prompt caching.
+    dynamic_content   — company financials, macro, news (changes per company).
+    """
     fin_data = _format_financials_for_llm(company)
     cur = company.currency or "USD"
-
-    dims_block = "\n".join(
-        f"  Dimension {n:02d} — {title}:\n  {question}"
-        for n, title, question in GRAVITY_DIMENSIONS
-    )
 
     from data_sources.fred_adapter import get_macro_block
     macro_block = get_macro_block()
     macro_section = f"\n\n{macro_block}" if macro_block else ""
-
     news_section = f"\n\n{news_block}" if news_block else ""
     country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
 
-    return f"""Perform a Gravity Taxers analysis for the company below.
-A "Gravity Taxer" is a business that occupies an essential choke point in a value chain
-and extracts a durable, recurring toll from economic activity flowing through it.
-Score the company on 10 structural dimensions of choke-point strength.
-Return a single JSON object with exactly the structure shown.
+    dynamic = (
+        f"{fin_data}{macro_section}{news_section}{country_macro_section}\n\n"
+        f"Currency is {cur}. Do not invent data not in the financial block above."
+    )
+    return _GRAVITY_CACHEABLE, dynamic
 
-{fin_data}{macro_section}{news_section}{country_macro_section}
 
-== GRAVITY DIMENSIONS TO SCORE ==
-{dims_block}
-
-Required JSON output:
-{{
-  "gravity_profile": "200-300 word description of this company as a potential Gravity Taxer. Cover: (1) what economic flow it sits at the centre of, (2) why customers cannot easily bypass it, (3) evidence of toll-extraction in the financials (margin trends, pricing history, recurring revenue), (4) how it compares in character to canonical choke-point businesses like Visa, Moody's, or MSCI. Be specific and critical — not all businesses qualify.",
-
-  "revenue_model": {{
-    "recurring_pct_estimate": <integer 0-100, estimated % of revenue that is recurring or subscription>,
-    "revenue_visibility": "<High|Medium|Low>",
-    "pricing_power": "<Strong|Moderate|Weak>",
-    "capex_intensity": "<Asset-Light|Moderate|Capital-Heavy>",
-    "pricing_evidence": "2-3 sentences describing specific evidence of pricing power from the financial data: price increases, ARPU trends, margin expansion, or lack thereof."
-  }},
-
-  "gravity_dimensions": [
-    {{
-      "number": 1,
-      "title": "Value Chain Essentialness",
-      "score": <integer 1-5>,
-      "rationale": "2-3 sentences. Cite specific evidence. Score 5 = near-irreplaceable, 3 = important but substitutable, 1 = easily bypassed."
-    }},
-    ... (repeat for all 10 dimensions, numbers 1-10)
-  ],
-
-  "total_gravity_score": <integer, sum of all 10 scores, max 50>,
-  "gravity_grade": "<A|B|C|D|F — A=45+, B=38+, C=30+, D=22+, F<22>",
-  "gravity_summary": "100-150 word synthesis. Is this a genuine Gravity Taxer? Where does it sit on the spectrum from pure toll-booth to commoditised service provider? What would need to change for it to score higher?",
-
-  "canonical_comparison": "100-150 word comparison to the canonical set of Gravity Taxers (Visa, Mastercard, Moody's, S&P Global, MSCI, FactSet, Verisk, CoStar, Wolters Kluwer, RELX, Bloomberg, SS&C). How does this company's choke-point strength compare? Is it in the same league, a tier below, or categorically different?",
-
-  "revenue_flywheel": "100-150 word description of any self-reinforcing dynamics in the revenue model. Does accumulated data, installed base, or network density create a flywheel that makes the toll booth progressively harder to compete with? Or is it a static advantage without compounding characteristics?",
-
-  "key_risks": [
-    "Specific risk 1 — what structural change could undermine the choke-point position?",
-    "Specific risk 2 — pricing or competitive risk",
-    "Specific risk 3 — technology disruption or disintermediation risk",
-    "Specific risk 4 — regulatory or macro risk"
-  ],
-
-  "conclusion": "200-300 word investment conclusion from the Gravity Taxer perspective. Synthesise the gravity score, revenue model quality, and current valuation. Is this a business worth paying a premium for? What is the margin of safety at current prices? What specific condition or metric would change the investment case?",
-
-  "recommendation": "<BUY|HOLD|SELL>",
-  "recommendation_rationale": "100-150 word rationale grounded in the gravity analysis. Reference the gravity score, the dominant choke-point characteristic, and whether the current valuation reflects the quality of the toll booth. State the key upside and downside triggers."
-}}
-
-Scoring calibration:
-- Score 5: Exceptional — near-perfect expression of this dimension (e.g. Visa on Switching Costs)
-- Score 4: Above average — clear advantage, durable
-- Score 3: Average — meets the bar, not a standout
-- Score 2: Below average — visible weakness
-- Score 1: Poor — this dimension actively hurts the investment case
-
-All 10 gravity_dimensions entries must be present (numbers 1-10).
-Currency is {cur}. Do not invent data not in the financial block above.
-"""
+def _build_gravity_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+    """Return the full prompt as a single string (used by adversarial mode)."""
+    cacheable, dynamic = _gravity_prompt_parts(company, news_block, macro_country_block)
+    return cacheable + "\n\n" + dynamic
 
 
 # ── Helper formatters ─────────────────────────────────────────────────────────
