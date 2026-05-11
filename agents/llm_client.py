@@ -252,7 +252,7 @@ class LLMClient:
         system_prompt: str,
         max_tokens: int,
         temperature: float,
-        cacheable_prefix: str = "",   # ignored — OpenAI has its own caching
+        cacheable_prefix: str = "",   # prepended to user_prompt (no server-side caching for OpenAI)
     ) -> str:
         try:
             from openai import OpenAI
@@ -267,6 +267,11 @@ class LLMClient:
             )
 
         client = OpenAI(api_key=key)
+        # Prepend cacheable_prefix to user_prompt — OpenAI has no server-side
+        # prompt caching via content blocks, so we just concatenate both parts
+        # into one message. The full schema + instructions + data all arrive together.
+        if cacheable_prefix:
+            user_prompt = cacheable_prefix + "\n\n" + user_prompt
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
