@@ -357,16 +357,27 @@ def _build_peer_table(
         st = styles["table_cell"] if right else styles["table_label"]
         return Paragraph(str(text), st)
 
+    def _fmt_with_ccy(value, peer_ccy: str) -> str:
+        """Format a monetary value; append currency suffix when it differs from anchor."""
+        if value is None:
+            return "n/a"
+        base = _fmt_b(value)
+        if peer_ccy and peer_ccy != cur:
+            return f"{base} {peer_ccy}"
+        return base
+
     def make_row(c: CompanyData, is_anchor=False):
         la = c.latest_annual()
+        # Determine the peer's reporting currency (fall back to price currency)
+        peer_ccy = (c.currency or c.currency_price or "").strip().upper()
         row = [
             Paragraph(
                 f"<b>{c.name or c.ticker}</b>" if is_anchor else (c.name or c.ticker),
                 styles["table_label"]
             ),
             p_cell(c.ticker),
-            p_cell(_fmt_b(la.revenue if la else None), right=True),
-            p_cell(_fmt_b(c.market_cap), right=True),
+            p_cell(_fmt_with_ccy(la.revenue if la else None, peer_ccy), right=True),
+            p_cell(_fmt_with_ccy(c.market_cap, peer_ccy), right=True),
             p_cell(_fmt_pct(c.roe),      right=True),
             p_cell(_fmt_x(c.price_to_book), right=True),
             p_cell(_fmt_x(c.pe_ratio),   right=True),

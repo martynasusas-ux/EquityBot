@@ -139,7 +139,10 @@ def _format_financials_for_llm(company: CompanyData) -> str:
     # Forward estimates (analyst consensus)
     fe = company.forward_estimates
     if fe is not None:
-        lines.append(f"\nANALYST CONSENSUS ESTIMATES ({fe.year}E, {fe.analyst_count or '?'} analysts):")
+        lines.append(
+            f"\nANALYST CONSENSUS ESTIMATES ({fe.year}E, {fe.analyst_count or '?'} analysts)"
+            f" [THESE ARE FUTURE FORECASTS — NOT REPORTED ACTUALS]:"
+        )
         if fe.revenue is not None:
             lines.append(f"  Revenue {fe.year}E:  {_b(fe.revenue)} {cur}M"
                          + (f"  (growth: {_pct(fe.revenue_growth_yoy)})" if fe.revenue_growth_yoy else ""))
@@ -197,6 +200,9 @@ Rules:
   Use Yahoo Finance ticker format (e.g. RELX.L for London, SAP.DE for Frankfurt, WKL.AS for Amsterdam).
 - All numbers you reference must come from the financial data provided — do not invent figures.
 - Write in English. Professional analyst tone. No bullet points inside the text fields — prose only.
+- CRITICAL: Clearly distinguish between historical actuals (from the ANNUAL FINANCIALS table)
+  and forward estimates (from the ANALYST CONSENSUS ESTIMATES section, labelled with "E" suffix
+  e.g. "2026E"). Never attribute a forward growth estimate to a past fiscal year.
 - If RECENT NEWS is provided, incorporate the most relevant developments into snapshot,
   bull_case, and bear_case. Do not fabricate news items.
 - If COUNTRY MACRO data is provided, use it to contextualize the operating environment
