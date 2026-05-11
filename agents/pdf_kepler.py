@@ -53,6 +53,15 @@ RED     = HexColor("#C0392B")
 ESTCOL  = HexColor("#2E4A8A")      # estimate column label colour (blue-ish)
 HDRFILL = HexColor("#E8EFF8")      # column header background
 
+# Plain hex strings for use inside Paragraph XML markup (ReportLab's
+# HexColor.hexval() returns "0xRRGGBB" not "#RRGGBB", so we keep these
+# separately rather than calling .hexval() at runtime).
+GREEN_HEX = "#1A7E3D"
+RED_HEX   = "#C0392B"
+NAVY_HEX  = "#1B3F6E"
+MGRAY_HEX = "#666666"
+ESTCOL_HEX = "#2E4A8A"
+
 BASE_FONT = "Helvetica"
 BOLD_FONT = "Helvetica-Bold"
 
@@ -426,9 +435,9 @@ def _chg_row(
     cells.append(Paragraph("", styles["cell_chg"]))
     for i in range(1, len(hist_years)):
         txt = _chg(vals[i], vals[i - 1])
-        col = GREEN if (vals[i] is not None and vals[i - 1] is not None
-                        and vals[i] > vals[i - 1]) else MGRAY
-        cells.append(Paragraph(f'<font color="#{col.hexval()[1:]}">{txt}</font>',
+        col_hex = GREEN_HEX if (vals[i] is not None and vals[i - 1] is not None
+                                and vals[i] > vals[i - 1]) else MGRAY_HEX
+        cells.append(Paragraph(f'<font color="{col_hex}">{txt}</font>',
                                 styles["cell_chg"]))
     for y in est_years:
         cells.append(Paragraph("", styles["cell_chg"]))
@@ -467,7 +476,8 @@ def _build_summary_page(
     if tp and cp and cp > 0:
         upside = (tp - cp) / cp * 100
 
-    rec_color = {"BUY": GREEN, "SELL": RED}.get(rec, NAVY)
+    rec_color     = {"BUY": GREEN, "SELL": RED}.get(rec, NAVY)
+    rec_color_hex = {"BUY": GREEN_HEX, "SELL": RED_HEX}.get(rec, NAVY_HEX)
 
     tp_data = [
         [
@@ -476,7 +486,7 @@ def _build_summary_page(
             Paragraph(f"<b>{tp:,.2f}</b>" if tp else "n/a", styles["tp_val"]),
             Paragraph("Reuters", styles["tp_sub"]),
             Paragraph(company.ticker or "", styles["tp_key"]),
-            Paragraph(f'<b><font color="#{rec_color.hexval()[1:]}">{rec}</font></b>',
+            Paragraph(f'<b><font color="{rec_color_hex}">{rec}</font></b>',
                       _S("rec", fontName=BOLD_FONT, fontSize=14, textColor=rec_color,
                          alignment=TA_CENTER, leading=16)),
         ],
@@ -515,7 +525,7 @@ def _build_summary_page(
     if thesis:
         story.append(Spacer(1, 4))
         story.append(Paragraph(
-            f'<i><font color="#{MGRAY.hexval()[1:]}">{thesis}</font></i>',
+            f'<i><font color="{MGRAY_HEX}">{thesis}</font></i>',
             _S("th", fontName="Helvetica-Oblique", fontSize=7.5,
                textColor=MGRAY, leading=11)
         ))
