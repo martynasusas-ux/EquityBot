@@ -262,6 +262,28 @@ class DataManager:
         for af in company.annual_financials.values():
             af.calculate_derived()
 
+        # ── Re-derive scalar margins from latest annual data ──────────────────
+        # EODHD's Highlights block contains TTM scalar margins (OperatingMarginTTM,
+        # ProfitMargin, etc.) which use a different methodology / trailing period
+        # than the annual statement data, causing visible contradictions in the
+        # report (e.g. checklist shows 9.1% EBIT margin while the table shows
+        # 17.0% for the most recent fiscal year).
+        # Fix: always derive scalar margin fields from the most recent fiscal year
+        # once all annual data has been merged and calculated. This guarantees
+        # the checklist and the financial table reference the same underlying numbers.
+        la = company.latest_annual()
+        if la and la.revenue and la.revenue > 0:
+            if la.ebit is not None:
+                company.ebit_margin = la.ebit / la.revenue
+            if la.net_income is not None:
+                company.net_margin = la.net_income / la.revenue
+            if la.ebitda is not None:
+                company.ebitda_margin = la.ebitda / la.revenue
+            if la.gross_profit is not None:
+                company.gross_margin = la.gross_profit / la.revenue
+            if la.total_equity and la.total_equity > 0 and la.net_income is not None:
+                company.roe = la.net_income / la.total_equity
+
         # ── Record what's still missing ────────────────────────────────────────
         company.missing_fields = self._find_missing_critical(company)
         if company.missing_fields:
