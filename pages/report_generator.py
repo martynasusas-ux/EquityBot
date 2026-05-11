@@ -994,6 +994,7 @@ if generate_clicked and ticker_input:
                 pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_sheet_{date}.pdf")
                 os.makedirs(OUTPUTS_DIR, exist_ok=True)
                 EODHDSheetGenerator().render(company, pdf_path)
+                analysis = {}
                 extra = {}
 
             elif report_type not in _BUILTIN_IDS:
