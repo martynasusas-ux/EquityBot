@@ -33,7 +33,12 @@ import streamlit as st
 # ── Cloud secret injection ────────────────────────────────────────────────────
 # Must happen before any local module imports (which trigger config.py).
 def _inject_cloud_secrets() -> None:
-    """Copy Streamlit secrets → os.environ so config.py picks them up."""
+    """Copy Streamlit secrets → os.environ so config.py picks them up.
+
+    Uses unconditional override so secrets always win over any .env file
+    or pre-existing env vars — critical when rotating keys or switching
+    LLM_PROVIDER/LLM_MODEL without redeploying.
+    """
     try:
         secret_keys = [
             "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
@@ -42,8 +47,8 @@ def _inject_cloud_secrets() -> None:
             "LLM_PROVIDER", "LLM_MODEL", "ADVERSARIAL_MODE",
         ]
         for k in secret_keys:
-            if k in st.secrets and not os.environ.get(k):
-                os.environ[k] = str(st.secrets[k])
+            if k in st.secrets:
+                os.environ[k] = str(st.secrets[k])   # always override
     except Exception:
         pass  # Running locally — .env handles it
 
