@@ -302,8 +302,8 @@ def _kv2_table(left_rows: list, right_rows: list, styles: dict) -> Table:
 # ── Financial history helpers ─────────────────────────────────────────────────
 
 def _build_col_plan(company: CompanyData) -> tuple[list[int], list[int]]:
-    all_hist = list(reversed(company.sorted_years()))
-    hist = list(reversed(all_hist[:8]))   # up to 8 years, chrono
+    all_hist = company.sorted_years()          # descending: newest first
+    hist = list(reversed(all_hist[:8]))        # 8 most recent → chronological
     est  = []
     fe = company.forward_estimates
     if fe and fe.year:

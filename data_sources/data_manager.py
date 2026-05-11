@@ -183,13 +183,30 @@ class DataManager:
                     company, result.data, prefer_source="eodhd",
                     fields=[
                         "annual_financials",
-                        # Identity — fill when yfinance returns partial/empty info
+                        # Identity
                         "name", "exchange", "currency", "currency_price",
                         "sector", "industry", "country", "isin",
-                        # Valuation scalars
-                        "forward_pe", "price_to_book",
+                        "description", "website", "employees",
+                        "ipo_date", "fiscal_year_end", "address", "phone",
+                        "officers",
+                        # Technicals / price levels
+                        "beta", "week_52_high", "week_52_low", "ma_50", "ma_200",
+                        # Ownership structure
+                        "shares_float", "pct_insiders", "pct_institutions",
+                        # Dividends & splits
+                        "payout_ratio",
+                        "forward_annual_dividend_rate", "forward_annual_dividend_yield",
+                        "dividend_date", "ex_dividend_date",
+                        "last_split_factor", "last_split_date",
+                        "dividend_yield",
+                        # Valuation multiples
+                        "forward_pe", "price_to_book", "price_to_sales", "peg_ratio",
                         "ev_sales", "ev_ebitda",
+                        # Per-share & TTM metrics
+                        "book_value_per_share", "revenue_per_share", "eps_ttm",
+                        # Profitability / growth
                         "roa", "ebit_margin", "ebitda_margin", "gross_margin",
+                        "quarterly_revenue_growth_yoy", "quarterly_earnings_growth_yoy",
                         "eps_estimate_next_year",
                     ],
                     override_financials=True,
@@ -357,12 +374,18 @@ class DataManager:
                     tgt_af = target.annual_financials[year]
                     self._merge_annual(tgt_af, src_af)
 
-        # Scalar fields
+        # Scalar (and list) fields — copy when target is None or empty list
         scalar_fields = [f for f in fields if f != "annual_financials"]
         for field in scalar_fields:
             if hasattr(target, field) and hasattr(source, field):
-                if getattr(target, field) is None and getattr(source, field) is not None:
-                    setattr(target, field, getattr(source, field))
+                tgt_val = getattr(target, field)
+                src_val = getattr(source, field)
+                tgt_empty = (tgt_val is None or
+                             (isinstance(tgt_val, list) and len(tgt_val) == 0))
+                src_has   = (src_val is not None and
+                             not (isinstance(src_val, list) and len(src_val) == 0))
+                if tgt_empty and src_has:
+                    setattr(target, field, src_val)
 
         # Track sources
         if prefer_source not in target.data_sources:

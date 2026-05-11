@@ -306,8 +306,8 @@ def _build_col_plan(company: CompanyData) -> tuple[list[int], list[int]]:
     hist_years_chrono: up to 7 historical years, oldest first.
     est_years: forward estimate year(s), oldest first (usually 1).
     """
-    all_hist = list(reversed(company.sorted_years()))   # most recent first
-    hist = list(reversed(all_hist[:7]))                 # up to 7, chrono order
+    all_hist = company.sorted_years()                    # descending: newest first
+    hist = list(reversed(all_hist[:7]))                 # 7 most recent → chronological
     est  = []
     fe = company.forward_estimates
     if fe and fe.year:
