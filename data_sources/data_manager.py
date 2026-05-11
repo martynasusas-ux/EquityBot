@@ -401,9 +401,16 @@ class DataManager:
             Use for EODHD paid data which is trusted across all statement types.
         """
         # Income statement + cash flow: always override
+        # NOTE: net_income and eps_diluted are intentionally excluded here —
+        # they are handled below as fill-only. Rationale: yfinance provides the
+        # correct IFRS consolidated net income / diluted EPS for most companies
+        # (sourced directly from the reported financial statements). EODHD's
+        # netIncome field often uses a different scope (e.g. excludes minority
+        # interest adjustments) and can diverge significantly from the IFRS figure.
+        # We keep yfinance's value when available and only fill from EODHD if blank.
         income_cf_fields = [
-            "revenue", "gross_profit", "ebitda", "ebit", "net_income",
-            "eps_diluted", "dividends_per_share",
+            "revenue", "gross_profit", "ebitda", "ebit",
+            "dividends_per_share",
             "gross_margin", "ebit_margin", "ebitda_margin", "net_margin",
             "operating_cash_flow", "capex", "fcf",
         ]
@@ -411,6 +418,13 @@ class DataManager:
             src_val = getattr(source, f, None)
             if src_val is not None:
                 setattr(target, f, src_val)
+
+        # net_income and eps_diluted: fill-only (preserve yfinance IFRS figures)
+        for f in ("net_income", "eps_diluted"):
+            if getattr(target, f, None) is None:
+                src_val = getattr(source, f, None)
+                if src_val is not None:
+                    setattr(target, f, src_val)
 
         # Balance sheet: override unconditionally if full_override, else fill-only
         balance_fields = [
@@ -422,6 +436,19 @@ class DataManager:
             if src_val is not None:
                 if full_override or getattr(target, f, None) is None:
                     setattr(target, f, src_val)
+
+        # ── Reset derived fields so calculate_derived() recomputes them ──────────
+        # After EODHD overrides income/balance fields, any derived ratios that
+        # yfinance previously computed (roe, pe_ratio, ev_ebit, etc.) are now stale
+        # because they were based on pre-override data. Resetting them to None
+        # forces the final calculate_derived() call in DataManager.get() to
+        # recompute them using the updated source values.
+        for derived in (
+            "roe", "roa", "net_margin", "pe_ratio",
+            "ev_ebit", "ev_sales", "fcf_yield", "div_yield",
+            "enterprise_value",
+        ):
+            setattr(target, derived, None)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Cache

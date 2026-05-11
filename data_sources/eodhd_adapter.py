@@ -465,12 +465,12 @@ class EODHDAdapter:
                     or b.get("cash")
                 )
 
-                # Shares outstanding (raw count → millions)
-                shares_raw = b.get("commonStock")
-                if shares_raw is not None:
-                    shares_val = self._parse_float(shares_raw)
-                    if shares_val is not None:
-                        af.shares_outstanding = shares_val / 1_000_000
+                # NOTE: EODHD's "commonStock" field is the subscribed capital
+                # (Grundkapital / par-value capital in EUR), NOT the actual share count.
+                # For German companies this is ~€112M for Rheinmetall, which when
+                # divided by 1M gives 112.0 — wildly wrong (actual ~46M shares).
+                # We intentionally do NOT read shares from EODHD balance sheet.
+                # yfinance provides "Ordinary Shares Number" which is the correct count.
 
             # ── Cash Flow ─────────────────────────────────────────────────────
             cf = cashflow_by_year.get(yr, {})

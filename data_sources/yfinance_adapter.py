@@ -219,10 +219,46 @@ class YFinanceAdapter:
                             dps_by_year[yr] = dps_by_year.get(yr, 0.0) + float(amount)
                         except Exception:
                             pass
+
+                    # ── Spring-payer detection (Continental European style) ──────
+                    # Many European companies declare a dividend for fiscal year Y
+                    # but pay it in April-June of year Y+1 (e.g. German AGM in May).
+                    # yfinance groups by PAYMENT year, so those payments land in
+                    # calendar year Y+1 — one year too late.
+                    # Fix: if ≥70% of all dividend payments fall in months 4-6,
+                    # treat each payment as belonging to fiscal year = payment_year - 1.
+                    payment_months = []
+                    for ts in divs.index:
+                        try:
+                            payment_months.append(pd.Timestamp(ts).month)
+                        except Exception:
+                            pass
+
+                    spring_count = sum(1 for m in payment_months if 4 <= m <= 6)
+                    is_spring_payer = (
+                        len(payment_months) > 0
+                        and spring_count / len(payment_months) >= 0.7
+                    )
+
+                    if is_spring_payer:
+                        # Payment in calendar year Y+1 → fiscal year Y
+                        dps_assign: dict[int, float] = {}
+                        for ts, amount in divs.items():
+                            try:
+                                fiscal_yr = pd.Timestamp(ts).year - 1
+                                dps_assign[fiscal_yr] = dps_assign.get(fiscal_yr, 0.0) + float(amount)
+                            except Exception:
+                                pass
+                        logger.debug(
+                            f"[yfinance] Spring-payer detected — shifted DPS: {dps_assign}"
+                        )
+                    else:
+                        dps_assign = dps_by_year
+
                     # Assign to matching AnnualFinancials records
                     for year, af in company.annual_financials.items():
-                        if year in dps_by_year and af.dividends_per_share is None:
-                            af.dividends_per_share = dps_by_year[year]
+                        if year in dps_assign and af.dividends_per_share is None:
+                            af.dividends_per_share = dps_assign[year]
                     logger.debug(f"[yfinance] DPS by year: {dps_by_year}")
             except Exception as e:
                 logger.warning(f"[yfinance] Could not fetch dividend history for {ticker}: {e}")
