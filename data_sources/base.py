@@ -89,23 +89,26 @@ class AnnualFinancials:
             if self.gross_margin is None and self.gross_profit is not None:
                 self.gross_margin = self.gross_profit / self.revenue
 
-        # ROE
-        if self.roe is None and self.net_income is not None and self.total_equity is not None:
-            if self.total_equity > 0:
-                self.roe = self.net_income / self.total_equity
-
-        # ROA
-        if self.roa is None and self.net_income is not None and self.total_assets is not None:
-            if self.total_assets > 0:
-                self.roa = self.net_income / self.total_assets
-
         # Underlying net income = adjusted EPS × shares (analyst-comparable basis)
+        # Compute FIRST so it's available for ROE/ROA below.
         # shares_outstanding in AnnualFinancials is stored in full units (e.g. 43_381_664),
         # not millions — divide by 1e6 to get the same millions unit as net_income.
         if self.net_income_underlying is None and self.eps_diluted is not None and self.shares_outstanding is not None:
             if self.shares_outstanding > 0:
                 shares_m = self.shares_outstanding / 1_000_000 if self.shares_outstanding > 1_000 else self.shares_outstanding
                 self.net_income_underlying = self.eps_diluted * shares_m
+
+        # ROE — prefer underlying NI (analyst-comparable) over IFRS NI
+        ni_for_roe = self.net_income_underlying if self.net_income_underlying is not None else self.net_income
+        if self.roe is None and ni_for_roe is not None and self.total_equity is not None:
+            if self.total_equity > 0:
+                self.roe = ni_for_roe / self.total_equity
+
+        # ROA — prefer underlying NI
+        ni_for_roa = self.net_income_underlying if self.net_income_underlying is not None else self.net_income
+        if self.roa is None and ni_for_roa is not None and self.total_assets is not None:
+            if self.total_assets > 0:
+                self.roa = ni_for_roa / self.total_assets
 
         # ── Market-cap based historical ratios ────────────────────────────────
         # These are computed once price_year_end and market_cap are populated

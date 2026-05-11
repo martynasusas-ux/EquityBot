@@ -326,8 +326,9 @@ class DataManager:
                 company.ebitda_margin = la.ebitda / la.revenue
             if la.gross_profit is not None:
                 company.gross_margin = la.gross_profit / la.revenue
-            if la.total_equity and la.total_equity > 0 and la.net_income is not None:
-                company.roe = la.net_income / la.total_equity
+            ni_roe = la.net_income_underlying if la.net_income_underlying is not None else la.net_income
+            if la.total_equity and la.total_equity > 0 and ni_roe is not None:
+                company.roe = ni_roe / la.total_equity
 
         # ── Record what's still missing ────────────────────────────────────────
         company.missing_fields = self._find_missing_critical(company)
