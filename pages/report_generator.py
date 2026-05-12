@@ -132,6 +132,18 @@ def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
     c_cr  = usage_claude.get("cache_read_input_tokens", 0) or 0
     c_out = usage_claude.get("output_tokens", 0) or 0
 
+    # ── Free report (no LLM) ─────────────────────────────────────────────────
+    if not usage_claude and not usage_openai:
+        st.markdown(
+            "<div style='background:#F0FFF4;border:1px solid #BBE0C8;border-radius:6px;"
+            "padding:8px 14px;margin:6px 0;font-size:12px;color:#1A7E3D;line-height:1.8;'>"
+            "💰 <b>LLM cost this report: $0.00</b>  ·  "
+            "This report uses no AI — pure data, no LLM call."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
     lines = []
 
     # Claude row
@@ -163,11 +175,7 @@ def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
         )
 
     rows_html = "<br>".join(lines)
-    total_html = (
-        f"<b>Total: ${total:.4f}</b>"
-        if usage_openai
-        else ""
-    )
+    total_html = f"<b>Total: ${total:.4f}</b>" if usage_openai else ""
 
     st.markdown(
         f"<div style='background:#F8FAFC;border:1px solid #D0DFF0;border-radius:6px;"
@@ -1273,11 +1281,9 @@ if st.session_state.report_result:
                        f"Data: {company.year_range()}  ·  "
                        f"Sources: {', '.join(company.data_sources)}")
 
-    # ── LLM cost summary ─────────────────────────────────────────────────────
-    _uc = res.get("usage_claude", {})
-    _uo = res.get("usage_openai")
-    if _uc or _uo:
-        _cost_block(_uc, _uo)
+    # ── LLM cost summary (always shown for equity reports) ───────────────────
+    if "usage_claude" in res:
+        _cost_block(res.get("usage_claude") or {}, res.get("usage_openai"))
 
     st.divider()
 
