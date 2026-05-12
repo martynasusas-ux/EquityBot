@@ -72,6 +72,43 @@ _ss("selected_fw_id",    "overview")
 _ss("studio_chat",       [])    # list of {role, content, applied_fields?}
 _ss("studio_pending",    None)  # only used for builtin fork-then-apply flow
 _ss("confirm_delete_id", None)
+_ss("studio_usage",      {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0})
+
+# ── Pricing: Claude Sonnet 4.6 ────────────────────────────────────────────────
+_PRICE_INPUT       = 3.00  / 1_000_000   # $3 / MTok
+_PRICE_CACHE_WRITE = 3.75  / 1_000_000   # $3.75 / MTok
+_PRICE_CACHE_READ  = 0.30  / 1_000_000   # $0.30 / MTok
+_PRICE_OUTPUT      = 15.00 / 1_000_000   # $15 / MTok
+
+
+def _add_usage(usage) -> None:
+    """Accumulate token usage from an API response into session state."""
+    u = st.session_state.studio_usage
+    u["input"]       += getattr(usage, "input_tokens",                0) or 0
+    u["cache_write"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
+    u["cache_read"]  += getattr(usage, "cache_read_input_tokens",     0) or 0
+    u["output"]      += getattr(usage, "output_tokens",               0) or 0
+
+
+def _usage_cost(u: dict) -> float:
+    return (
+        u["input"]       * _PRICE_INPUT +
+        u["cache_write"] * _PRICE_CACHE_WRITE +
+        u["cache_read"]  * _PRICE_CACHE_READ +
+        u["output"]      * _PRICE_OUTPUT
+    )
+
+
+def _usage_bar() -> None:
+    """Render a compact token + cost summary line."""
+    u    = st.session_state.studio_usage
+    cost = _usage_cost(u)
+    total_in = u["input"] + u["cache_write"] + u["cache_read"]
+    parts = [f"📥 {total_in:,} in", f"📤 {u['output']:,} out"]
+    if u["cache_read"]:
+        parts.append(f"⚡ {u['cache_read']:,} cached")
+    parts.append(f"💰 ~${cost:.4f}")
+    st.caption("  ·  ".join(parts))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -220,6 +257,7 @@ def _call_claude(system: str, messages: list, max_tokens: int = 4000) -> str:
             system=system,
             messages=messages,
         )
+        _add_usage(resp.usage)
         return resp.content[0].text
     except Exception as e:
         return f"⚠️ Claude API error: {e}"
@@ -326,6 +364,7 @@ def _do_fork(fw: FrameworkConfig, auto_apply: Optional[dict] = None) -> Framewor
         _apply_changes(forked, auto_apply)
     st.session_state.selected_fw_id = forked.id
     st.session_state.studio_chat    = []
+    st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
     st.session_state.studio_pending = None
     return forked
 
@@ -400,6 +439,9 @@ def render_chat_tab(fw: FrameworkConfig) -> None:
             if st.button("❌ Discard", key="discard_pending"):
                 st.session_state.studio_pending = None
                 st.rerun()
+
+    # ── Usage bar ─────────────────────────────────────────────────────────────
+    _usage_bar()
 
     # ── Input ─────────────────────────────────────────────────────────────────
     user_input = st.chat_input(
@@ -776,6 +818,7 @@ with st.sidebar:
             st.success(f"Imported: **{imported.name}**")
             st.session_state.selected_fw_id = imported.id
             st.session_state.studio_chat    = []
+            st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
             st.session_state.studio_pending = None
             st.rerun()
         except Exception as e:
@@ -784,6 +827,7 @@ with st.sidebar:
     if st.button("＋ New Framework", use_container_width=True, key="btn_new_fw"):
         st.session_state.selected_fw_id = "__new__"
         st.session_state.studio_chat    = []
+        st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
         st.session_state.studio_pending = None
         st.rerun()
 
@@ -801,6 +845,7 @@ with st.sidebar:
             if not is_sel:
                 st.session_state.selected_fw_id = fw.id
                 st.session_state.studio_chat    = []
+                st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
                 st.session_state.studio_pending = None
             st.rerun()
         tag = "built-in" if fw.is_builtin else ("forked" if fw.base_id else "custom")

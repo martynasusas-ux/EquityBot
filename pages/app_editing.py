@@ -60,7 +60,42 @@ def _ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
 
-_ss("app_chat", [])   # list of {role, content, tool_calls?}
+_ss("app_chat",  [])   # list of {role, content, tool_calls?}
+_ss("app_usage", {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0})
+
+# ── Pricing: Claude Sonnet 4.6 ────────────────────────────────────────────────
+_PRICE_INPUT       = 3.00  / 1_000_000
+_PRICE_CACHE_WRITE = 3.75  / 1_000_000
+_PRICE_CACHE_READ  = 0.30  / 1_000_000
+_PRICE_OUTPUT      = 15.00 / 1_000_000
+
+
+def _add_usage(usage) -> None:
+    u = st.session_state.app_usage
+    u["input"]       += getattr(usage, "input_tokens",                0) or 0
+    u["cache_write"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
+    u["cache_read"]  += getattr(usage, "cache_read_input_tokens",     0) or 0
+    u["output"]      += getattr(usage, "output_tokens",               0) or 0
+
+
+def _usage_cost(u: dict) -> float:
+    return (
+        u["input"]       * _PRICE_INPUT +
+        u["cache_write"] * _PRICE_CACHE_WRITE +
+        u["cache_read"]  * _PRICE_CACHE_READ +
+        u["output"]      * _PRICE_OUTPUT
+    )
+
+
+def _usage_bar() -> None:
+    u    = st.session_state.app_usage
+    cost = _usage_cost(u)
+    total_in = u["input"] + u["cache_write"] + u["cache_read"]
+    parts = [f"📥 {total_in:,} in", f"📤 {u['output']:,} out"]
+    if u["cache_read"]:
+        parts.append(f"⚡ {u['cache_read']:,} cached")
+    parts.append(f"💰 ~${cost:.4f}")
+    st.caption("  ·  ".join(parts))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -328,6 +363,8 @@ def _run_agent(messages: list) -> tuple[str, list[dict]]:
         except Exception as e:
             return f"⚠️ Claude API error: {e}", tool_calls
 
+        _add_usage(resp.usage)
+
         if resp.stop_reason == "end_turn":
             text = "".join(
                 b.text for b in resp.content if hasattr(b, "text")
@@ -441,13 +478,14 @@ if not ANTHROPIC_API_KEY:
 col_title, col_clear = st.columns([5, 1])
 with col_clear:
     if st.button("🗑 Clear", use_container_width=True, help="Clear chat history"):
-        st.session_state.app_chat = []
+        st.session_state.app_chat  = []
+        st.session_state.app_usage = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
         st.rerun()
 
 st.divider()
 
 # ── Chat history ──────────────────────────────────────────────────────────────
-chat_box = st.container(height=520)
+chat_box = st.container(height=500)
 with chat_box:
     if not st.session_state.app_chat:
         st.markdown(
@@ -464,6 +502,9 @@ with chat_box:
             st.markdown(msg["content"])
             if msg.get("tool_calls"):
                 _render_tool_calls(msg["tool_calls"])
+
+# ── Usage bar ─────────────────────────────────────────────────────────────────
+_usage_bar()
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 user_input = st.chat_input("Describe the change you want…")
