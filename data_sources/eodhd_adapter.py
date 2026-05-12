@@ -535,6 +535,23 @@ class EODHDAdapter:
             # EPS is per-share — parse_float only (no /1M conversion)
             af.eps_diluted  = self._parse_float(inc.get("eps") or inc.get("epsDiluted"))
 
+            # Extended IS fields
+            af.cost_of_revenue           = self._to_m(inc.get("costOfRevenue"))
+            af.depreciation_amortization = self._to_m(
+                inc.get("depreciationAndAmortization")
+                or inc.get("reconciledDepreciation")
+            )
+            af.interest_expense          = self._to_m(inc.get("interestExpense"))
+            af.interest_income           = self._to_m(inc.get("interestIncome"))
+            af.income_before_tax         = self._to_m(inc.get("incomeBeforeTax"))
+            af.tax_provision             = self._to_m(
+                inc.get("incomeTaxExpense") or inc.get("taxProvision")
+            )
+            af.minority_interest         = self._to_m(inc.get("minorityInterest"))
+            af.net_income_continuing_ops = self._to_m(inc.get("netIncomeFromContinuingOps"))
+            af.sga                       = self._to_m(inc.get("sellingGeneralAdministrative"))
+            af.extraordinary_items       = self._to_m(inc.get("extraordinaryItems"))
+
             # ── Balance Sheet ─────────────────────────────────────────────────
             b = balance_by_year.get(yr, {})
             if b:
@@ -570,6 +587,22 @@ class EODHDAdapter:
                     or b.get("cash")
                 )
 
+                # Extended Balance Sheet fields
+                af.goodwill               = self._to_m(b.get("goodWill"))
+                af.intangible_assets      = self._to_m(b.get("intangibleAssets"))
+                af.inventory              = self._to_m(b.get("inventory"))
+                af.net_receivables        = self._to_m(b.get("netReceivables"))
+                af.accounts_payable       = self._to_m(b.get("accountsPayable"))
+                af.ppe_net                = self._to_m(
+                    b.get("propertyPlantAndEquipmentNet")
+                    or b.get("propertyPlantEquipment")
+                )
+                af.retained_earnings      = self._to_m(b.get("retainedEarnings"))
+                af.capital_lease_obligations = self._to_m(b.get("capitalLeaseObligations"))
+                af.net_working_capital    = self._to_m(b.get("netWorkingCapital"))
+                af.current_assets         = self._to_m(b.get("totalCurrentAssets"))
+                af.current_liabilities    = self._to_m(b.get("totalCurrentLiabilities"))
+
                 # NOTE: EODHD's "commonStock" field is the subscribed capital
                 # (Grundkapital / par-value capital in EUR), NOT the actual share count.
                 # For German companies this is ~€112M for Rheinmetall, which when
@@ -592,6 +625,16 @@ class EODHDAdapter:
                 capex_raw = self._to_m(cf.get("capitalExpenditures"))
                 if capex_raw is not None:
                     af.capex = abs(capex_raw)
+
+                # Extended Cash Flow fields
+                div_paid = self._to_m(cf.get("dividendsPaid"))
+                if div_paid is not None:
+                    af.dividends_paid = abs(div_paid)   # store as positive
+                af.change_in_working_capital = self._to_m(cf.get("changeInWorkingCapital"))
+                af.investing_cash_flow       = self._to_m(
+                    cf.get("totalCashflowsFromInvestingActivities")
+                )
+                af.net_borrowings            = self._to_m(cf.get("netBorrowings"))
 
             # Derive margins, net debt, ROE, etc.
             af.calculate_derived()

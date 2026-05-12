@@ -233,7 +233,7 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary", "eodhd_sheet"}
+_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary", "eodhd_sheet", "eodhd_fundamentals"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -1064,6 +1064,22 @@ if generate_clicked and ticker_input:
                 analysis = {}
                 extra = {}
 
+            elif report_type == "eodhd_fundamentals":
+                # ── EODHD Fundamentals Data From API ──────────────────────────
+                # No LLM call — 4-page analysis: profile, P&L, BS/CF, scorecard.
+                _prog.progress(80, text="📄  Rendering EODHD Fundamentals report…")
+                st.write("📄  Rendering EODHD Fundamentals report…")
+                import importlib, agents.pdf_eodhd_fundamentals as _efmod
+                importlib.reload(_efmod)
+                from agents.pdf_eodhd_fundamentals import EODHDFundamentalsGenerator
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_fundamentals_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                EODHDFundamentalsGenerator().render(company, pdf_path)
+                analysis = {}
+                extra = {}
+
             elif report_type not in _BUILTIN_IDS:
                 # ── User-created / custom framework ───────────────────────────
                 from models.generic_runner import GenericRunner
@@ -1151,7 +1167,7 @@ if generate_clicked and ticker_input:
             if adv_result is not None:
                 _usage_claude = adv_result.claude_usage
                 _usage_openai = adv_result.openai_usage
-            elif report_type in ("kepler_summary", "eodhd_sheet"):
+            elif report_type in ("kepler_summary", "eodhd_sheet", "eodhd_fundamentals"):
                 _usage_claude = {}
                 _usage_openai = None
             else:

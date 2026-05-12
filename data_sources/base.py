@@ -44,6 +44,37 @@ class AnnualFinancials:
     total_equity: Optional[float] = None
     shares_outstanding: Optional[float] = None  # in millions
 
+    # Income Statement — extended fields
+    cost_of_revenue: Optional[float] = None          # Cost of goods sold / cost of revenue
+    depreciation_amortization: Optional[float] = None  # D&A (from IS or CF)
+    interest_expense: Optional[float] = None         # Interest expense (positive)
+    interest_income: Optional[float] = None          # Interest income
+    income_before_tax: Optional[float] = None        # Pre-tax income (EBT)
+    tax_provision: Optional[float] = None            # Income tax expense
+    minority_interest: Optional[float] = None        # Minority / non-controlling interest in NI
+    net_income_continuing_ops: Optional[float] = None  # NI from continuing operations
+    sga: Optional[float] = None                      # Selling, General & Administrative
+    extraordinary_items: Optional[float] = None      # One-off items (can be negative)
+
+    # Balance Sheet — extended fields
+    goodwill: Optional[float] = None                 # Goodwill from acquisitions
+    intangible_assets: Optional[float] = None        # Intangible assets (excl. goodwill)
+    inventory: Optional[float] = None               # Inventories
+    net_receivables: Optional[float] = None          # Accounts receivable (net)
+    accounts_payable: Optional[float] = None         # Accounts payable
+    ppe_net: Optional[float] = None                  # PP&E net of depreciation
+    retained_earnings: Optional[float] = None        # Retained earnings
+    capital_lease_obligations: Optional[float] = None  # Finance lease liabilities
+    net_working_capital: Optional[float] = None      # Current assets - current liabilities
+    current_assets: Optional[float] = None           # Total current assets
+    current_liabilities: Optional[float] = None      # Total current liabilities
+
+    # Cash Flow — extended fields
+    dividends_paid: Optional[float] = None           # Dividends paid (positive, from CF stmt)
+    change_in_working_capital: Optional[float] = None  # WC change in operating CF
+    investing_cash_flow: Optional[float] = None      # Total cash from investing activities
+    net_borrowings: Optional[float] = None           # Net debt raised / (repaid)
+
     # Cash Flow
     operating_cash_flow: Optional[float] = None
     capex: Optional[float] = None           # Capital expenditures (positive number)
@@ -53,6 +84,11 @@ class AnnualFinancials:
     roe: Optional[float] = None             # Return on Equity
     roa: Optional[float] = None             # Return on Assets
     roic: Optional[float] = None            # Return on Invested Capital
+
+    # Calculated ratios (derived in calculate_derived)
+    current_ratio: Optional[float] = None            # current_assets / current_liabilities
+    interest_coverage: Optional[float] = None        # EBIT / interest_expense
+    ev_ebitda: Optional[float] = None                # enterprise_value / ebitda (historical)
 
     # Data provenance — which source filled this row
     source: str = ""   # "eodhd" | "yfinance" | "edgar" | "alpha_vantage" | ""
@@ -147,6 +183,31 @@ class AnnualFinancials:
         if self.div_yield is None and self.dividends_per_share is not None:
             if self.price_year_end and self.price_year_end > 0:
                 self.div_yield = self.dividends_per_share / self.price_year_end
+
+        # Current Ratio  =  current_assets / current_liabilities
+        if self.current_ratio is None and self.current_assets is not None:
+            if self.current_liabilities and self.current_liabilities > 0:
+                self.current_ratio = self.current_assets / self.current_liabilities
+
+        # Interest Coverage  =  EBIT / interest_expense
+        if self.interest_coverage is None and self.ebit is not None:
+            if self.interest_expense and self.interest_expense > 0:
+                self.interest_coverage = self.ebit / self.interest_expense
+
+        # Historical EV/EBITDA
+        if self.ev_ebitda is None and ev is not None and ev > 0:
+            if self.ebitda and self.ebitda > 0:
+                self.ev_ebitda = ev / self.ebitda
+
+        # D&A from EBITDA - EBIT (if not directly available)
+        if self.depreciation_amortization is None:
+            if self.ebitda is not None and self.ebit is not None:
+                self.depreciation_amortization = self.ebitda - self.ebit
+
+        # Net working capital from current assets/liabilities if not directly set
+        if self.net_working_capital is None and self.current_assets is not None:
+            if self.current_liabilities is not None:
+                self.net_working_capital = self.current_assets - self.current_liabilities
 
 
 @dataclass
