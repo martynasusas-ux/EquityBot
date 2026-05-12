@@ -244,7 +244,7 @@ def _gravity_table(dims: list[dict], styles: dict, start: int, end: int) -> Tabl
     subset = [d for d in dims if start <= d.get("number", 0) <= end]
 
     for row_idx, dim in enumerate(subset, start=1):
-        score = dim.get("score", 3)
+        score = int(dim.get("score", 3) or 3)
         score_colour = GREEN if score >= 4 else RED if score <= 2 else AMBER
 
         # Score dot indicator

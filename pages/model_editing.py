@@ -1,7 +1,7 @@
 """
-framework_studio.py — Framework Studio page for Your Humble EquityBot.
+model_editing.py — Framework Studio page for Your Humble EquityBot.
 
-Accessible via the Streamlit sidebar (multi-page app).
+AI chat that understands the full codebase context and edits frameworks directly.
 """
 
 from __future__ import annotations
@@ -23,15 +23,15 @@ import streamlit as st
 # ── Path setup ────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# ── Auth guard — must be first, blocks unauthenticated direct URL access ──────
+# ── Auth guard ────────────────────────────────────────────────────────────────
 from utils.auth import require_auth
 require_auth()
 
 
 def _inject_secrets() -> None:
     try:
-        for k in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_MODEL"]:
-            if k in st.secrets and not os.environ.get(k):
+        for k in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_PROVIDER"]:
+            if k in st.secrets:
                 os.environ[k] = str(st.secrets[k])
     except Exception:
         pass
@@ -55,6 +55,11 @@ st.markdown("""
 .badge-builtin { background:#D6E8F7; color:#1B3F6E; }
 .badge-custom  { background:#D4EDDA; color:#1A7E3D; }
 .badge-forked  { background:#FFF3CD; color:#856404; }
+.applied-badge {
+    display:inline-block; background:#D4EDDA; color:#1A7E3D;
+    font-size:11px; font-weight:600; padding:2px 8px;
+    border-radius:4px; margin-bottom:4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -64,29 +69,154 @@ def _ss(key, default):
         st.session_state[key] = default
 
 _ss("selected_fw_id",    "overview")
-_ss("studio_chat",       [])          # list of {role, content}
-_ss("studio_pending",    None)        # proposed changes dict
+_ss("studio_chat",       [])    # list of {role, content, applied_fields?}
+_ss("studio_pending",    None)  # only used for builtin fork-then-apply flow
 _ss("confirm_delete_id", None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Context loaders
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Focused framework-creation context (replaces full CLAUDE.md) ─────────────
+_FRAMEWORK_CONTEXT = """
+You are the Framework Studio AI inside EquityBot — a private AI equity research tool.
+Your expertise is writing LLM system prompts and prompt templates for investment analysis frameworks.
+
+━━━ HOW CUSTOM FRAMEWORKS WORK ━━━
+Frameworks are JSON configs in frameworks/. When a report is generated:
+  1. The user's prompt_template has placeholders substituted with live company data.
+  2. The filled template is sent to the LLM (Claude or GPT-4o) with system_prompt as persona.
+  3. The LLM returns JSON matching the output_schema field names.
+  4. The HTML renderer iterates report_sections to build the final report.
+
+Built-in frameworks (overview, fisher, gravity, kepler_summary, eodhd_sheet) have hardcoded
+Python PDF renderers and use __builtin__ as their prompt_template — they cannot be run as
+custom HTML frameworks.
+
+━━━ ALL AVAILABLE DATA FIELDS ━━━
+Everything below is available on the CompanyData object and exposed via placeholders or {financials}.
+
+IDENTITY
+  ticker, name, exchange, currency, sector, industry, country, isin
+  description (business paragraph), website, employees
+
+CURRENT MARKET
+  current_price, market_cap (millions), shares_outstanding (millions), enterprise_value (millions)
+  as_of_date
+
+VALUATION MULTIPLES
+  pe_ratio (trailing), forward_pe, price_to_book (P/B), ev_ebit, ev_ebitda, ev_sales
+  fcf_yield (decimal 0.05 = 5%), dividend_yield (decimal)
+  peg_ratio
+
+PROFITABILITY — TTM
+  net_margin, ebit_margin, ebitda_margin, gross_margin  (all decimals)
+  roe, roa, roic  (all decimals)
+
+BALANCE SHEET HEALTH
+  gearing (Net Debt / EBITDA), net_debt (millions), debt_to_equity
+  current_ratio, interest_coverage, beta
+
+TECHNICAL / PRICE LEVELS
+  week_52_high, week_52_low, ma_50, ma_200
+
+OWNERSHIP
+  shares_float (millions), pct_insiders (decimal), pct_institutions (decimal)
+
+DIVIDENDS
+  dividend_yield, forward_dividend_rate, forward_dividend_yield, payout_ratio
+  ex_dividend_date, dividend_date, five_year_avg_dividend_yield
+
+ANNUAL HISTORY — AnnualFinancials dict keyed by fiscal year (7–10 years)
+  P&L:     revenue, gross_profit, ebitda, ebit, net_income, net_income_underlying,
+           eps_diluted, dividends_per_share
+  Margins: gross_margin, ebit_margin, ebitda_margin, net_margin  (decimals)
+  Balance: total_assets, total_debt, cash, net_debt, total_equity, shares_outstanding
+  CF:      operating_cash_flow, capex, fcf
+  Returns: roe, roa, roic
+  Market:  price_year_end, market_cap, enterprise_value, pe_ratio, ev_ebit, ev_sales,
+           fcf_yield, div_yield
+
+FORWARD ESTIMATES — ForwardEstimates (next fiscal year)
+  revenue, net_income, eps_diluted, ebitda
+  revenue_growth_yoy, eps_growth_yoy, net_margin (derived)
+  pe_ratio (forward), ev_sales, analyst_count
+
+━━━ PROMPT TEMPLATE PLACEHOLDERS ━━━
+{financials}          full annual history table — all AnnualFinancials fields, 7+ years
+{forward_estimates}   analyst consensus for next fiscal year
+{macro_context}       FRED rates (Fed Funds, CPI, 10Y yield) + World Bank country GDP/inflation
+
+{company_name}  {ticker}  {currency}  {sector}  {industry}  {country}
+{description}   {employees}  {website}
+{current_price}  {market_cap}  {enterprise_value}
+{pe_ratio}  {forward_pe}  {ev_ebitda}  {ev_sales}
+{dividend_yield}  {fcf_yield}  {roe}  {ebit_margin}  {net_margin}
+{revenue_cagr_3y}  {revenue_cagr_5y}
+
+━━━ OUTPUT SCHEMA FIELD TYPES ━━━
+  string   number   boolean
+  enum     — add "enum_values": ["BUY","HOLD","SELL"]
+  list     — array of strings
+  object   — nested dict
+
+━━━ REPORT SECTION TYPES ━━━
+  text_block            long-form text (LLM narrative)
+  bullet_list           list field rendered as bullets
+  recommendation_banner coloured BUY/HOLD/SELL banner
+  score_table           table of scored dimensions
+  key_value             simple label: value table
+  financial_table       numbers table
+  checklist             boolean checklist
+  peer_table            competitor comparison
+
+━━━ WRITING GOOD PROMPTS ━━━
+- system_prompt: analyst persona, what analytical lens the framework applies
+- prompt_template: company data blocks + explicit JSON schema the LLM must return
+- Always list the exact JSON keys the LLM must return (with types and constraints)
+- Monetary values in {financials} are in millions (except per-share figures like eps_diluted, dps)
+- Margins / yields / ratios are decimals (0.15 = 15%) — tell the LLM this
+- For scoring frameworks: define the scale clearly (e.g. 1–5 where 5 = best) in system_prompt
+- For recommendation fields: constrain to exact strings ("BUY", "HOLD", "SELL")
+"""
+
+
+def _fw_to_json(fw: FrameworkConfig) -> str:
+    """Serialize full framework content for the system prompt."""
+    return json.dumps({
+        "id":               fw.id,
+        "name":             fw.name,
+        "icon":             fw.icon,
+        "description":      fw.description,
+        "is_builtin":       fw.is_builtin,
+        "base_id":          fw.base_id,
+        "version":          fw.version,
+        "system_prompt":    fw.system_prompt,
+        "prompt_template":  fw.prompt_template,
+        "output_schema":    fw.output_schema,
+        "report_sections":  fw.report_sections,
+    }, indent=2, ensure_ascii=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Claude helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _call_claude(system: str, messages: list, max_tokens: int = 3000) -> str:
-    """Always calls Claude directly (Framework Studio always uses Claude)."""
+def _call_claude(system: str, messages: list, max_tokens: int = 4000) -> str:
+    """Always calls Claude (Framework Studio always uses Claude regardless of LLM_PROVIDER)."""
     if not ANTHROPIC_API_KEY:
         return (
             "⚠️ ANTHROPIC_API_KEY is not configured. "
-            "Add it to .env to use the Framework Studio chat."
+            "Add it to .env (or Streamlit secrets) to use the Framework Studio."
         )
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         resp = client.messages.create(
-            model=LLM_MODEL or "claude-sonnet-4-5",
+            model="claude-sonnet-4-5",
             max_tokens=max_tokens,
-            temperature=0.4,
+            temperature=0.3,
             system=system,
             messages=messages,
         )
@@ -110,69 +240,67 @@ def _strip_changes_block(text: str) -> str:
     return re.sub(r"```changes\s*\n.*?\n```", "", text, flags=re.DOTALL).strip()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# System prompts — rich context
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def _system_prompt_edit(fw: FrameworkConfig) -> str:
-    return f"""You are the Framework Studio assistant for Your Humble EquityBot.
-You help users refine and extend investment report frameworks.
+    fw_json = _fw_to_json(fw)
+    return f"""{_FRAMEWORK_CONTEXT}
 
-Current framework:  {fw.name}
-Description:        {fw.description}
-Is built-in:        {fw.is_builtin}
+━━━ CURRENT FRAMEWORK — FULL CONTENT ━━━
+{fw_json}
 
-Current system prompt (first 1200 chars):
----
-{fw.system_prompt[:1200]}
----
-
-When proposing changes to system_prompt or prompt_template, append a JSON block:
+━━━ HOW TO OUTPUT CHANGES ━━━
+When making a change, emit a ```changes block with ONLY the fields that change.
+Always output the COMPLETE new value — never a partial diff.
 
 ```changes
 {{
-  "system_prompt": "full revised system prompt",
-  "prompt_template": "full revised template"
+  "system_prompt": "full new system prompt here",
+  "prompt_template": "full new template here"
 }}
 ```
 
-Only include the fields that actually change.
+Allowed fields: system_prompt, prompt_template, name, description, icon, output_schema, report_sections
 
-Available template placeholders: {{financials}}, {{forward_estimates}},
-{{company_name}}, {{ticker}}, {{currency}}, {{sector}}, {{industry}},
-{{country}}, {{current_price}}, {{market_cap}}, {{enterprise_value}},
-{{pe_ratio}}, {{forward_pe}}, {{ev_ebitda}}, {{ev_sales}},
-{{dividend_yield}}, {{fcf_yield}}, {{roe}}, {{ebit_margin}},
-{{net_margin}}, {{revenue_cagr_3y}}, {{revenue_cagr_5y}},
-{{description}}, {{employees}}, {{website}}.
-
-Keep responses concise. Only emit the JSON block when a concrete change is proposed.
+Rules:
+- If the framework is built-in (is_builtin: true), still propose the changes — the UI will
+  offer a "Fork & Apply" button.
+- Clean JSON only — no comments, no trailing commas.
+- Brief explanation before the block is fine; nothing needed after.
+- When only answering a question (no change), reply in plain text — no ```changes block.
 """
 
 
 def _system_prompt_new() -> str:
-    return """You are the Framework Studio assistant for Your Humble EquityBot.
-Help the user design a new investment analysis report framework.
+    return f"""{_FRAMEWORK_CONTEXT}
 
-When ready to propose a framework, append this JSON block:
+━━━ HOW TO PROPOSE A NEW FRAMEWORK ━━━
+When you are ready, emit a ```changes block:
 
 ```changes
-{
+{{
   "name": "Framework Name",
   "icon": "📊",
-  "description": "One-line description",
-  "system_prompt": "LLM persona and analytical instructions...",
-  "prompt_template": "Analyse {company_name} ({ticker}).\\n\\n{financials}\\n\\nReturn JSON with:\\n...",
+  "description": "One-line description shown in the report selector",
+  "system_prompt": "You are an analyst specialising in…",
+  "prompt_template": "Analyse {{company_name}} ({{ticker}}).\\n\\n{{financials}}\\n\\nReturn JSON with:\\n...",
   "output_schema": [
-    {"name": "field", "type": "string", "description": "...", "required": true}
+    {{"name": "summary",            "type": "string", "description": "...", "required": true}},
+    {{"name": "recommendation",     "type": "enum",   "description": "BUY/HOLD/SELL", "required": true, "enum_values": ["BUY","HOLD","SELL"]}},
+    {{"name": "recommendation_rationale", "type": "string", "description": "...", "required": true}}
   ],
   "report_sections": [
-    {"id": "s1", "type": "text_block", "title": "Title", "field": "field", "order": 1}
+    {{"id": "s1", "type": "text_block",           "title": "Analysis",       "field": "summary",                  "order": 1}},
+    {{"id": "s2", "type": "recommendation_banner","title": "Recommendation", "field": "recommendation",           "order": 2}},
+    {{"id": "s3", "type": "text_block",           "title": "Rationale",     "field": "recommendation_rationale", "order": 3}}
   ]
-}
+}}
 ```
 
-Section types: text_block, bullet_list, recommendation_banner, score_table, key_value,
-financial_table, checklist, peer_table.
-
-Always include recommendation (enum: BUY/HOLD/SELL) and recommendation_rationale (string).
-The prompt_template must instruct the LLM to return JSON with the exact field names in output_schema.
+Always include recommendation + recommendation_rationale unless the user explicitly wants a
+pure data / no-recommendation framework.
 """
 
 
@@ -180,21 +308,25 @@ The prompt_template must instruct the LLM to return JSON with the exact field na
 # Framework actions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _apply_changes(fw: FrameworkConfig, changes: dict) -> None:
+def _apply_changes(fw: FrameworkConfig, changes: dict) -> list[str]:
+    """Apply changes to a framework. Returns list of changed field names."""
+    changed = []
     for field in ("system_prompt", "prompt_template", "name", "description", "icon",
                   "output_schema", "report_sections"):
         if field in changes:
             setattr(fw, field, changes[field])
+            changed.append(field)
     fm.save(fw)
+    return changed
 
 
 def _do_fork(fw: FrameworkConfig, auto_apply: Optional[dict] = None) -> FrameworkConfig:
     forked = fm.fork(fw.id, f"{fw.name} (my version)")
     if auto_apply:
         _apply_changes(forked, auto_apply)
-    st.session_state.selected_fw_id  = forked.id
-    st.session_state.studio_chat     = []
-    st.session_state.studio_pending  = None
+    st.session_state.selected_fw_id = forked.id
+    st.session_state.studio_chat    = []
+    st.session_state.studio_pending = None
     return forked
 
 
@@ -223,79 +355,91 @@ def render_chat_tab(fw: FrameworkConfig) -> None:
     if fw.is_builtin:
         st.info(
             "💡 **Built-in framework — read-only.** "
-            "Click **🍴 Fork** above to create an editable copy. "
-            "You can still chat to understand the framework."
+            "Chat to explore or plan changes. When Claude proposes a change you'll see a "
+            "**Fork & Apply** button — that creates your own editable copy and applies the change."
         )
 
-    # Chat history
-    chat_box = st.container(height=400)
+    # ── Chat history ──────────────────────────────────────────────────────────
+    chat_box = st.container(height=460)
     with chat_box:
         if not st.session_state.studio_chat:
             st.markdown(
-                f"*Start the conversation. Claude knows the **{fw.name}** framework "
-                f"and can help you refine prompts, add sections, or adjust the analytical style.*"
+                f"*Tell me what to change in the **{fw.name}** framework — "
+                f"I'll update it immediately. Or ask me anything about how it works.*"
             )
+
         for msg in st.session_state.studio_chat:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                if msg.get("applied_fields"):
+                    fields_str = ", ".join(f"`{f}`" for f in msg["applied_fields"])
+                    st.markdown(
+                        f'<span class="applied-badge">✓ Applied: {fields_str}</span>',
+                        unsafe_allow_html=True,
+                    )
 
-        # Pending changes banner
+        # Pending block — only appears for built-in frameworks (needs fork first)
         pending = st.session_state.studio_pending
-        if pending:
+        if pending and fw.is_builtin:
             st.divider()
-            st.markdown("**📝 Claude proposes these changes:**")
+            st.markdown("**📝 Proposed changes (fork to apply):**")
             for k, v in pending.items():
                 if k in ("output_schema", "report_sections"):
                     st.markdown(f"**{k}:** *(structured data — {len(v)} items)*")
                 elif isinstance(v, str) and len(v) > 300:
                     with st.expander(f"**{k}** (click to expand)"):
-                        st.code(v[:1200] + ("…" if len(v) > 1200 else ""), language="text")
+                        st.code(v[:2000] + ("…" if len(v) > 2000 else ""), language="text")
                 else:
                     st.markdown(f"**{k}:** {v}")
 
-            if not fw.is_builtin:
-                ca, cb = st.columns(2)
-                with ca:
-                    if st.button("✅ Apply changes", type="primary",
-                                 use_container_width=True, key="apply_chat"):
-                        _apply_changes(fw, pending)
-                        st.session_state.studio_pending = None
-                        st.success("✓ Changes saved.")
-                        st.rerun()
-                with cb:
-                    if st.button("❌ Discard", use_container_width=True, key="discard_chat"):
-                        st.session_state.studio_pending = None
-                        st.rerun()
-            else:
-                st.info("Fork this framework first to apply changes.")
-                if st.button("🍴 Fork & Apply changes", type="primary", key="fork_apply"):
-                    forked = _do_fork(fw, auto_apply=pending)
-                    st.session_state.studio_pending = None
-                    st.success(f"Forked to **{forked.name}** and changes applied.")
-                    st.rerun()
+            if st.button("🍴 Fork & Apply changes", type="primary", key="fork_apply"):
+                forked = _do_fork(fw, auto_apply=pending)
+                st.session_state.studio_pending = None
+                st.success(f"✅ Forked to **{forked.name}** and changes applied.")
+                st.rerun()
+            if st.button("❌ Discard", key="discard_pending"):
+                st.session_state.studio_pending = None
+                st.rerun()
 
-    # Input
+    # ── Input ─────────────────────────────────────────────────────────────────
     user_input = st.chat_input(
-        "Ask Claude to change the analytical style, add a new section, adjust the scoring…",
+        "Tell me what to change, or ask a question…",
         key=f"chat_input_{fw.id}",
     )
     if user_input:
         st.session_state.studio_chat.append({"role": "user", "content": user_input})
-        sys = _system_prompt_edit(fw)
+
+        sys_prompt = _system_prompt_edit(fw)
         msgs = [{"role": m["role"], "content": m["content"]}
                 for m in st.session_state.studio_chat]
-        with st.spinner("Claude is thinking…"):
-            response = _call_claude(sys, msgs)
-        changes = _extract_changes(response)
+
+        with st.spinner("Thinking…"):
+            response = _call_claude(sys_prompt, msgs)
+
+        changes      = _extract_changes(response)
+        clean_text   = _strip_changes_block(response) if changes else response
+        applied_flds = None
+
         if changes:
-            st.session_state.studio_pending = changes
-            clean = _strip_changes_block(response)
-            st.session_state.studio_chat.append(
-                {"role": "assistant",
-                 "content": clean or "I've proposed changes above — review and apply."}
-            )
+            if not fw.is_builtin:
+                # ── Auto-apply immediately for editable frameworks ────────────
+                applied_flds = _apply_changes(fw, changes)
+                assistant_msg = clean_text or f"Done — updated {', '.join(applied_flds)}."
+            else:
+                # ── For built-in: stage as pending (user must fork first) ─────
+                st.session_state.studio_pending = changes
+                assistant_msg = (
+                    clean_text
+                    or "I've proposed changes above. Fork the framework to apply them."
+                )
         else:
-            st.session_state.studio_chat.append({"role": "assistant", "content": response})
+            assistant_msg = response
+
+        st.session_state.studio_chat.append({
+            "role":           "assistant",
+            "content":        assistant_msg,
+            "applied_fields": applied_flds,
+        })
         st.rerun()
 
 
@@ -313,7 +457,7 @@ def render_editor_tab(fw: FrameworkConfig) -> None:
 
     st.markdown("#### Prompt Template")
     st.caption(
-        "The user prompt assembled for each analysis request. "
+        "The user prompt assembled per analysis run. "
         "Use `{financials}`, `{currency}`, `{company_name}`, `{ticker}`, "
         "`{forward_estimates}` as the main dynamic placeholders."
     )
@@ -441,8 +585,8 @@ def render_preview_tab(fw: FrameworkConfig) -> None:
         with st.spinner(f"Generating '{fw.name}' preview for {preview_ticker}…"):
             try:
                 from models.generic_runner import GenericRunner
-                runner = GenericRunner()
-                tf = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
+                runner  = GenericRunner()
+                tf      = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
                 tmp_path = tf.name
                 tf.close()
 
@@ -479,11 +623,11 @@ def render_preview_tab(fw: FrameworkConfig) -> None:
 
 
 def render_new_framework_page() -> None:
-    """Full-page UI for creating a new framework."""
+    """Full-page UI for creating a new framework via AI chat or manual form."""
     st.markdown("### ＋ Create a New Framework")
     st.markdown(
-        "Describe the framework you want — Claude will design it. "
-        "Or use the **Manual** tab to build it from scratch."
+        "Describe the framework you want and I'll design it. "
+        "Or use the **Manual** tab to build from scratch."
     )
     st.divider()
 
@@ -495,13 +639,13 @@ def render_new_framework_page() -> None:
             "- *Create a dividend growth framework focused on 10-year payout history, "
             "earnings coverage, and FCF conversion*\n"
             "- *Build a simple 5-question quality scorecard for small-cap companies*\n"
-            "- *Design an ESG-focused framework that analyses sustainability disclosures*"
+            "- *Design a capital allocation framework scoring buybacks, M&A, and dividends*"
         )
 
-        chat_box = st.container(height=360)
+        chat_box = st.container(height=380)
         with chat_box:
             if not st.session_state.studio_chat:
-                st.markdown("*Describe the framework and Claude will generate a full design.*")
+                st.markdown("*Describe the framework and I'll generate a full design.*")
             for msg in st.session_state.studio_chat:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
@@ -526,7 +670,7 @@ def render_new_framework_page() -> None:
                         st.success(f"✅ Created: **{fw.name}**")
                         st.rerun()
                 with sb:
-                    if st.button("🔄 Iterate (keep chatting)",
+                    if st.button("🔄 Keep chatting",
                                  use_container_width=True, key="iterate_new"):
                         st.session_state.studio_pending = None
                         st.rerun()
@@ -538,16 +682,16 @@ def render_new_framework_page() -> None:
             st.session_state.studio_chat.append({"role": "user", "content": user_input})
             msgs = [{"role": m["role"], "content": m["content"]}
                     for m in st.session_state.studio_chat]
-            with st.spinner("Claude is designing your framework…"):
+            with st.spinner("Designing your framework…"):
                 response = _call_claude(_system_prompt_new(), msgs)
             changes = _extract_changes(response)
             if changes:
                 st.session_state.studio_pending = changes
                 clean = _strip_changes_block(response)
-                st.session_state.studio_chat.append(
-                    {"role": "assistant",
-                     "content": clean or f"I've designed **{changes.get('name','the framework')}** — review above."}
-                )
+                st.session_state.studio_chat.append({
+                    "role":    "assistant",
+                    "content": clean or f"I've designed **{changes.get('name','the framework')}** — review above.",
+                })
             else:
                 st.session_state.studio_chat.append({"role": "assistant", "content": response})
             st.rerun()
@@ -616,7 +760,7 @@ def render_new_framework_page() -> None:
 
 with st.sidebar:
     st.markdown("## ⚙️ Model Editing")
-    st.caption("Create · Edit · Export · Import")
+    st.caption("Edit · Create · Export · Import")
     st.divider()
 
     # Import
@@ -665,7 +809,8 @@ with st.sidebar:
     st.divider()
     st.markdown(
         "<small>Built-in frameworks are protected. "
-        "Use **Fork** to create your own editable version.</small>",
+        "Chat proposes changes — you'll get a **Fork & Apply** button. "
+        "For your own frameworks changes apply immediately.</small>",
         unsafe_allow_html=True,
     )
 

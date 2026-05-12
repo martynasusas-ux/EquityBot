@@ -352,8 +352,12 @@ def _validate_analysis(a: dict) -> dict:
         full_dims.append(d)
     a["gravity_dimensions"] = full_dims
 
+    # Coerce all scores to int (LLM may return strings or floats)
+    for d in full_dims:
+        d["score"] = int(d.get("score", 3) or 3)
+
     # Recalculate total
-    a["total_gravity_score"] = sum(d.get("score", 3) for d in full_dims)
+    a["total_gravity_score"] = sum(d["score"] for d in full_dims)
     t = a["total_gravity_score"]
     if "gravity_grade" not in a or a["gravity_grade"] not in ("A","B","C","D","F"):
         a["gravity_grade"] = ("A" if t >= 45 else "B" if t >= 38 else
