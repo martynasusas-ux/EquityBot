@@ -206,8 +206,9 @@ class DataManager:
                         "forward_estimates",
                         # Per-share & TTM metrics
                         "book_value_per_share", "revenue_per_share", "eps_ttm",
-                        # Profitability / growth
-                        "roa", "ebit_margin", "ebitda_margin", "gross_margin",
+                        # Profitability / growth — EODHD Highlights is the primary source
+                        "net_margin", "roe", "roa",
+                        "ebit_margin", "ebitda_margin", "gross_margin",
                         "quarterly_revenue_growth_yoy", "quarterly_earnings_growth_yoy",
                         "eps_estimate_next_year",
                     ],
@@ -232,15 +233,14 @@ class DataManager:
         # enterprise_value and net_debt are also reset so EV recalculates from
         # yfinance market_cap (live) + EODHD net_debt (accurate balance sheet).
         if eodhd_succeeded:
-            # enterprise_value, ev_ebitda, ev_sales are now provided directly by EODHD
-            # (Valuation.EnterpriseValue / EnterpriseValueEbitda / EnterpriseValueRevenue)
-            # so we do NOT reset them. ev_ebit still needs recomputation (no direct field).
+            # Reset only fields that depend on current market data and must be
+            # recomputed after EODHD. Do NOT reset margin/roe/roa — EODHD's
+            # Highlights block (ProfitMargin, OperatingMarginTTM, ReturnOnEquityTTM)
+            # is now the authoritative source for those and must not be discarded.
             for _f in [
                 "net_debt",
                 "ev_ebit",
                 "fcf_yield", "gearing",
-                "net_margin", "ebit_margin", "ebitda_margin", "gross_margin",
-                "roe", "roa",
             ]:
                 setattr(company, _f, None)
 
@@ -307,28 +307,25 @@ class DataManager:
         for af in company.annual_financials.values():
             af.calculate_derived()
 
-        # ── Re-derive scalar margins from latest annual data ──────────────────
-        # EODHD's Highlights block contains TTM scalar margins (OperatingMarginTTM,
-        # ProfitMargin, etc.) which use a different methodology / trailing period
-        # than the annual statement data, causing visible contradictions in the
-        # report (e.g. checklist shows 9.1% EBIT margin while the table shows
-        # 17.0% for the most recent fiscal year).
-        # Fix: always derive scalar margin fields from the most recent fiscal year
-        # once all annual data has been merged and calculated. This guarantees
-        # the checklist and the financial table reference the same underlying numbers.
+        # ── Fill scalar margins from latest annual data — only when EODHD didn't ──
+        # EODHD Highlights (ProfitMargin, OperatingMarginTTM, ReturnOnEquityTTM etc.)
+        # is the primary source and was already set above. Only derive from annual
+        # data here if EODHD didn't provide a value (e.g. EODHD unavailable, or the
+        # company is not covered by the Highlights block).
         la = company.latest_annual()
         if la and la.revenue and la.revenue > 0:
-            if la.ebit is not None:
+            if company.ebit_margin is None and la.ebit is not None:
                 company.ebit_margin = la.ebit / la.revenue
-            if la.net_income is not None:
+            if company.net_margin is None and la.net_income is not None:
                 company.net_margin = la.net_income / la.revenue
-            if la.ebitda is not None:
+            if company.ebitda_margin is None and la.ebitda is not None:
                 company.ebitda_margin = la.ebitda / la.revenue
-            if la.gross_profit is not None:
+            if company.gross_margin is None and la.gross_profit is not None:
                 company.gross_margin = la.gross_profit / la.revenue
-            ni_roe = la.net_income_underlying if la.net_income_underlying is not None else la.net_income
-            if la.total_equity and la.total_equity > 0 and ni_roe is not None:
-                company.roe = ni_roe / la.total_equity
+            if company.roe is None:
+                ni_roe = la.net_income_underlying if la.net_income_underlying is not None else la.net_income
+                if la.total_equity and la.total_equity > 0 and ni_roe is not None:
+                    company.roe = ni_roe / la.total_equity
 
         # ── Record what's still missing ────────────────────────────────────────
         company.missing_fields = self._find_missing_critical(company)
@@ -469,14 +466,8 @@ class DataManager:
             ALL fields are replaced when source has a value.
             Use for EODHD paid data which is trusted across all statement types.
         """
-        # Income statement + cash flow: always override
-        # NOTE: net_income and eps_diluted are intentionally excluded here —
-        # they are handled below as fill-only. Rationale: yfinance provides the
-        # correct IFRS consolidated net income / diluted EPS for most companies
-        # (sourced directly from the reported financial statements). EODHD's
-        # netIncome field often uses a different scope (e.g. excludes minority
-        # interest adjustments) and can diverge significantly from the IFRS figure.
-        # We keep yfinance's value when available and only fill from EODHD if blank.
+        # Income statement + cash flow: always override from EODHD (full_override=True).
+        # net_income is handled separately below (override for EODHD, fill-only otherwise).
         income_cf_fields = [
             "revenue", "gross_profit", "ebitda", "ebit",
             "dividends_per_share",
@@ -488,10 +479,11 @@ class DataManager:
             if src_val is not None:
                 setattr(target, f, src_val)
 
-        # net_income: fill-only — preserve yfinance IFRS consolidated net income
-        if getattr(target, "net_income", None) is None:
-            src_ni = getattr(source, "net_income", None)
-            if src_ni is not None:
+        # net_income: override when full_override=True (EODHD is authoritative);
+        # fill-only for other sources (Alpha Vantage etc.)
+        src_ni = getattr(source, "net_income", None)
+        if src_ni is not None:
+            if full_override or getattr(target, "net_income", None) is None:
                 target.net_income = src_ni
 
         # eps_diluted: ALWAYS override with EODHD Earnings.Annual epsActual.
