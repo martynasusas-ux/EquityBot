@@ -475,70 +475,51 @@ def _build_summary_page(
     story.append(Paragraph("Summary", styles["section"]))
     story.append(HRFlowable(width=CW, thickness=0.5, color=ORANGE, spaceAfter=6))
 
-    # ── Target Price / Latest Price / Upside block ────────────────────────────
-    tp    = analysis.get("target_price")
-    rec   = analysis.get("recommendation", "n/a")
-    thesis = analysis.get("key_thesis", "")
-    val_method = analysis.get("valuation_method", "")
-    cp    = company.current_price
+    # ── Market Data block (pure data, no LLM) ────────────────────────────────
+    cp  = company.current_price
 
-    upside = None
-    if tp and cp and cp > 0:
-        upside = (tp - cp) / cp * 100
+    def _px(v):
+        return f"{v:,.2f}" if v is not None else "n/a"
+    def _pct_val(v):
+        return f"{v*100:.1f}%" if v is not None else "n/a"
+    def _x_val(v):
+        return f"{v:.1f}x" if v is not None else "n/a"
 
-    rec_color     = {"BUY": GREEN, "SELL": RED}.get(rec, NAVY)
-    rec_color_hex = {"BUY": GREEN_HEX, "SELL": RED_HEX}.get(rec, NAVY_HEX)
+    mktcap_str = "n/a"
+    if company.market_cap is not None:
+        mc = company.market_cap
+        mktcap_str = f"{mc/1000:.1f}B {cur}" if mc >= 1000 else f"{mc:.0f}M {cur}"
 
-    tp_data = [
-        [
-            Paragraph("<b>Target Price</b>", styles["tp_key"]),
-            Paragraph(f"<font size='9'>{cur}</font>", styles["tp_sub"]),
-            Paragraph(f"<b>{tp:,.2f}</b>" if tp else "n/a", styles["tp_val"]),
-            Paragraph("Reuters", styles["tp_sub"]),
-            Paragraph(company.ticker or "", styles["tp_key"]),
-            Paragraph(f'<b><font color="{rec_color_hex}">{rec}</font></b>',
-                      _S("rec", fontName=BOLD_FONT, fontSize=14, textColor=rec_color,
-                         alignment=TA_CENTER, leading=16)),
-        ],
+    mkt_data = [
         [
             Paragraph("<b>Latest Price</b>", styles["tp_key"]),
             Paragraph(f"<font size='9'>{cur}</font>", styles["tp_sub"]),
-            Paragraph(f"<b>{cp:,.2f}</b>" if cp else "n/a", styles["tp_val"]),
-            Paragraph("Bloomberg", styles["tp_sub"]),
-            Paragraph(
-                (company.ticker or "").replace(".", " ").replace("-", " "),
-                styles["tp_key"]
-            ),
-            Paragraph(val_method or "", styles["tp_sub"]),
+            Paragraph(f"<b>{_px(cp)}</b>", styles["tp_val"]),
+            Paragraph("52W High", styles["tp_sub"]),
+            Paragraph(_px(company.week_52_high), styles["tp_key"]),
+            Paragraph("52W Low", styles["tp_sub"]),
+            Paragraph(_px(company.week_52_low), styles["tp_key"]),
         ],
         [
-            Paragraph("<b>Upside</b>", styles["tp_key"]),
+            Paragraph("<b>Market Cap</b>", styles["tp_key"]),
             Paragraph("", styles["tp_sub"]),
-            Paragraph(f"<b>{upside:+.2f}%</b>" if upside is not None else "n/a",
-                      styles["tp_val"]),
-            Paragraph("", styles["tp_sub"]),
-            Paragraph("", styles["tp_key"]),
-            Paragraph("", styles["tp_sub"]),
+            Paragraph(f"<b>{mktcap_str}</b>", styles["tp_val"]),
+            Paragraph("Beta", styles["tp_sub"]),
+            Paragraph(_px(company.beta), styles["tp_key"]),
+            Paragraph("Exchange", styles["tp_sub"]),
+            Paragraph(company.exchange or "n/a", styles["tp_key"]),
         ],
     ]
-    tp_w = [90, 22, 80, 50, 100, CW - 90 - 22 - 80 - 50 - 100]
-    tp_table = Table(tp_data, colWidths=tp_w, hAlign="LEFT")
-    tp_table.setStyle(TableStyle([
-        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",  (0, 0), (-1, -1), 3),
+    mkt_w = [90, 22, 110, 50, 70, 50, CW - 90 - 22 - 110 - 50 - 70 - 50]
+    mkt_table = Table(mkt_data, colWidths=mkt_w, hAlign="LEFT")
+    mkt_table.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
     ]))
-    story.append(tp_table)
-
-    if thesis:
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            f'<i><font color="{MGRAY_HEX}">{thesis}</font></i>',
-            _S("th", fontName="Helvetica-Oblique", fontSize=7.5,
-               textColor=MGRAY, leading=11)
-        ))
+    story.append(mkt_table)
 
     story.append(Spacer(1, 8))
     story.append(HRFlowable(width=CW, thickness=0.4, color=RULE, spaceAfter=4))

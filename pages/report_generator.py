@@ -947,29 +947,9 @@ if generate_clicked and ticker_input:
                 extra = {"score": score, "grade": grade}
 
             elif report_type == "kepler_summary":
-                # ── Kepler-style analyst summary sheet ────────────────────────
-                import importlib, models.kepler_summary as _ksmod
-                importlib.reload(_ksmod)
-                from models.kepler_summary import (
-                    _kepler_prompt_parts, SYSTEM_PROMPT as SYS,
-                )
-                cacheable_pfx, dynamic_prompt = _kepler_prompt_parts(
-                    company, news_block=_news_block,
-                    macro_country_block=_country_macro_block
-                )
-                _prog.progress(25, text="🤖  Generating target price & recommendation…")
-                st.write("🤖  Generating target price and recommendation (Claude)…")
-                analysis = llm.generate_json(
-                    dynamic_prompt, SYS, max_tokens=400,
-                    cacheable_prefix=cacheable_pfx,
-                )
-                tp  = analysis.get("target_price", "n/a")
-                rec = analysis.get("recommendation", "n/a")
-                st.write(f"✓  Recommendation: **{rec}** · Target: **{tp} {company.currency_price or ''}**")
-                _show_token_usage(llm.last_usage)
-                _prog.progress(75, text="✓  Analysis complete")
-
-                _prog.progress(88, text="📄  Rendering Kepler Summary PDF…")
+                # ── Kepler-style analyst summary sheet (no LLM — pure data) ──
+                analysis = {}   # no LLM call; all content comes from CompanyData
+                _prog.progress(80, text="📄  Rendering Kepler Summary PDF…")
                 st.write("📄  Rendering Kepler Summary PDF…")
                 import importlib, agents.pdf_kepler as _kmod
                 importlib.reload(_kmod)
@@ -979,7 +959,7 @@ if generate_clicked and ticker_input:
                 pdf_path = str(OUTPUTS_DIR / f"{safe}_kepler_{date}.pdf")
                 os.makedirs(OUTPUTS_DIR, exist_ok=True)
                 KeplerPDFGenerator().render(company, analysis, pdf_path)
-                extra = {"target_price": tp, "valuation_method": analysis.get("valuation_method", "")}
+                extra = {}
 
             elif report_type == "eodhd_sheet":
                 # ── EODHD Comprehensive Fundamental Data Sheet ────────────────
