@@ -422,6 +422,9 @@ class DataManager:
             if override_scalars and field not in _SCALAR_PROTECTED:
                 # EODHD paid data takes priority — overwrite unconditionally
                 setattr(target, field, src_val)
+                # Track this field as EODHD-sourced for PDF checkmark indicators
+                if hasattr(target, "eodhd_fields") and field not in target.eodhd_fields:
+                    target.eodhd_fields.append(field)
             else:
                 # Fill-only: only write when target is empty
                 tgt_val = getattr(target, field)
@@ -504,6 +507,10 @@ class DataManager:
             if src_val is not None:
                 if full_override or getattr(target, f, None) is None:
                     setattr(target, f, src_val)
+
+        # Mark this annual row as EODHD-sourced so PDF generators can show ✓
+        if full_override:
+            target.source = "eodhd"
 
         # ── Reset derived fields so calculate_derived() recomputes them ──────────
         # After EODHD overrides income/balance fields, any derived ratios that

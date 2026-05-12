@@ -62,6 +62,10 @@ ORANGE_HEX = "#C9843E"
 BASE_FONT = "Helvetica"
 BOLD_FONT = "Helvetica-Bold"
 
+# ── EODHD verified-data checkmark ─────────────────────────────────────────────
+# ZapfDingbats '4' = ✓ checkmark (built-in PDF font, no TTF needed)
+_EODHD_CHECK = ' <font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+
 LABEL_W  = 160
 MAX_DCOLS = 8
 DATA_W   = (CW - LABEL_W) / MAX_DCOLS
@@ -320,9 +324,10 @@ def _col_widths(n_data: int) -> list[float]:
 
 def _hdr_row(styles: dict, hist: list[int], est: list[int],
              label: str = "FY") -> list:
+    """All historical columns on this sheet are EODHD-verified — always show ✓."""
     row = [Paragraph(label, styles["col_hdr_lbl"])]
     for y in hist:
-        row.append(Paragraph(f"12/{y}", styles["col_hdr"]))
+        row.append(Paragraph(f"12/{y}{_EODHD_CHECK}", styles["col_hdr"]))
     for y in est:
         row.append(Paragraph(f"<b>12/{y}E</b>", styles["col_hdr"]))
     return row
@@ -587,6 +592,16 @@ def _build_profile_page(company: CompanyData, styles: dict) -> list:
               for i in range(len(off_data))],
         ]))
         story.append(off_tbl)
+
+    # EODHD source legend
+    _S_LEGEND = ParagraphStyle("legend_eo",
+        fontName=BASE_FONT, fontSize=6, textColor=CGRAY,
+        spaceBefore=6, leading=8)
+    story.append(Paragraph(
+        '<font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+        " = EODHD verified data  |  All financials on this report are sourced from EODHD Fundamentals",
+        _S_LEGEND,
+    ))
 
     return story
 

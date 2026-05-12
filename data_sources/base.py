@@ -54,6 +54,9 @@ class AnnualFinancials:
     roa: Optional[float] = None             # Return on Assets
     roic: Optional[float] = None            # Return on Invested Capital
 
+    # Data provenance — which source filled this row
+    source: str = ""   # "eodhd" | "yfinance" | "edgar" | "alpha_vantage" | ""
+
     # Historical market-based metrics (derived from year-end stock price)
     # Populated by yfinance_adapter after fetching monthly price history.
     price_year_end: Optional[float] = None          # Year-end stock price (local currency)
@@ -279,6 +282,9 @@ class CompanyData:
     data_sources: List[str] = field(default_factory=list)
     missing_fields: List[str] = field(default_factory=list)
     fetch_timestamp: Optional[str] = None
+    # Scalar field names that were set / overridden by EODHD (authoritative paid data).
+    # Used by PDF generators to display a green ✓ indicator next to EODHD-verified values.
+    eodhd_fields: List[str] = field(default_factory=list)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Convenience helpers

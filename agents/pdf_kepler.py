@@ -65,6 +65,27 @@ ESTCOL_HEX = "#2E4A8A"
 BASE_FONT = "Helvetica"
 BOLD_FONT = "Helvetica-Bold"
 
+# ── EODHD verified-data checkmark ─────────────────────────────────────────────
+# ZapfDingbats is a built-in PDF font; character '4' renders as a ✓ checkmark.
+# Appended in Paragraph XML markup next to values / column headers from EODHD.
+_EODHD_CHECK = ' <font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+
+
+def _eo(text: str, field: str, company) -> str:
+    """Return text + green ✓ if *field* was supplied by EODHD for this company."""
+    eodhd_fields = getattr(company, "eodhd_fields", None) or []
+    if field in eodhd_fields:
+        return text + _EODHD_CHECK
+    return text
+
+
+def _eo_af(year: int, company) -> str:
+    """Return green ✓ if the AnnualFinancials row for *year* is EODHD-sourced."""
+    af = (getattr(company, "annual_financials", None) or {}).get(year)
+    if af and getattr(af, "source", "") == "eodhd":
+        return _EODHD_CHECK
+    return ""
+
 # ── Label column width and data column width ──────────────────────────────────
 LABEL_W  = 148          # pts — row-label column
 MAX_DCOLS = 8           # max data columns (historical + forward)
@@ -357,11 +378,17 @@ def _hdr_row(
     est_years: list[int],
     label: str = "FY",
     label_suffix: str = "",
+    company=None,
 ) -> list:
-    """Build a column-header row: [label, y1, y2, ..., E1, ...]."""
+    """Build a column-header row: [label, y1, y2, ..., E1, ...].
+
+    When *company* is supplied, a green ✓ (ZapfDingbats) is appended to each
+    historical year whose AnnualFinancials row was sourced from EODHD.
+    """
     row = [Paragraph(f"{label}{label_suffix}", styles["col_hdr_lbl"])]
     for y in hist_years:
-        row.append(Paragraph(f"12/{y}", styles["col_hdr"]))
+        check = _eo_af(y, company) if company is not None else ""
+        row.append(Paragraph(f"12/{y}{check}", styles["col_hdr"]))
     for y in est_years:
         row.append(Paragraph(f"<b>12/{y}E</b>", styles["col_hdr"]))
     return row
@@ -531,8 +558,8 @@ def _build_summary_page(
     sum_years = sum_hist + sum_est
     n_sum_cols = len(sum_years)     # 3 or 4
 
-    # Full-year header labels: "12/2024", "12/2026E"
-    yr_labels = [f"12/{y}" for y in sum_hist] + [f"12/{y}E" for y in sum_est]
+    # Full-year header labels: "12/2024 ✓" (EODHD ✓ when sourced from EODHD), "12/2026E"
+    yr_labels = [f"12/{y}{_eo_af(y, company)}" for y in sum_hist] + [f"12/{y}E" for y in sum_est]
 
     # Value helpers
     def _lv(af, fn, fmt):
@@ -669,31 +696,23 @@ def _build_summary_page(
     sh = company.shares_outstanding
     sh_str = f"{sh:.1f}" if sh else "n/a"
 
-    # Derive 52-week high / low from the most recent year's price_year_end
-    # and prior year (proxy only — yfinance doesn't store intra-year range)
-    la = company.latest_annual()
-    prev_yr = (la.year - 1) if la else None
-    prev_af = company.annual_financials.get(prev_yr) if prev_yr else None
-    prices = [
-        p for p in [
-            la.price_year_end if la else None,
-            prev_af.price_year_end if prev_af else None,
-        ] if p is not None
-    ]
-    yr_high_str = f"{max(prices):,.2f}" if prices else "n/a"
-    yr_low_str  = f"{min(prices):,.2f}" if prices else "n/a"
-
     mkt_rows = [
         (f"Market cap ({cur}bn)", mc_str),
         ("No. of shares outstanding (m)", sh_str),
         ("Current price",
          f"{company.current_price:,.2f} {cur}" if company.current_price else "n/a"),
         ("P/E (trailing)",
-         f"{company.pe_ratio:.1f}x" if company.pe_ratio else "n/a"),
+         (_eo(f"{company.pe_ratio:.1f}x", "pe_ratio", company)
+          if company.pe_ratio else "n/a")),
         ("EV/EBIT",
          f"{company.ev_ebit:.1f}x" if company.ev_ebit else "n/a"),
-        ("Year-high (proxy)", yr_high_str),
-        ("Year-low (proxy)",  yr_low_str),
+        # 52-week levels come from EODHD when available (week_52_high / week_52_low)
+        ("52W High",
+         _eo(_px(company.week_52_high), "week_52_high", company)),
+        ("52W Low",
+         _eo(_px(company.week_52_low),  "week_52_low",  company)),
+        ("Beta",
+         _eo(_px(company.beta), "beta", company) if company.beta else "n/a"),
     ]
 
     mkt_data = [
@@ -717,6 +736,16 @@ def _build_summary_page(
     mkt_tbl.setStyle(TableStyle(mkt_style))
     story.append(mkt_tbl)
 
+    # EODHD source legend
+    _S_LEGEND = ParagraphStyle("legend",
+        fontName=BASE_FONT, fontSize=6, textColor=CGRAY,
+        spaceBefore=4, leading=8)
+    story.append(Paragraph(
+        '<font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+        " = verified EODHD data",
+        _S_LEGEND,
+    ))
+
     return story
 
 
@@ -737,7 +766,7 @@ def _build_valuation_page(
     story.append(Paragraph("Valuation", styles["section"]))
     story.append(HRFlowable(width=CW, thickness=0.5, color=ORANGE, spaceAfter=4))
 
-    hdr = _hdr_row(styles, hist_years, est_years, label="FY", label_suffix=f" ({company.currency or ''})")
+    hdr = _hdr_row(styles, hist_years, est_years, label="FY", label_suffix=f" ({company.currency or ''})", company=company)
     rows = [hdr]
     section_rows = set()
 
@@ -829,7 +858,7 @@ def _build_income_page(
     story.append(Paragraph("Income Statement", styles["section"]))
     story.append(HRFlowable(width=CW, thickness=0.5, color=ORANGE, spaceAfter=4))
 
-    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)")
+    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)", company=company)
     rows = [hdr]
     section_rows = set()
 
@@ -900,7 +929,7 @@ def _build_cashflow_page(
     story.append(Paragraph("Cash Flow", styles["section"]))
     story.append(HRFlowable(width=CW, thickness=0.5, color=ORANGE, spaceAfter=4))
 
-    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)")
+    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)", company=company)
     rows = [hdr]
     section_rows = set()
 
@@ -952,7 +981,7 @@ def _build_balance_page(
     story.append(Paragraph("Balance Sheet", styles["section"]))
     story.append(HRFlowable(width=CW, thickness=0.5, color=ORANGE, spaceAfter=4))
 
-    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)")
+    hdr = _hdr_row(styles, hist_years, est_years, label=f"FY ({cur}m)", company=company)
     rows = [hdr]
     section_rows = set()
 
