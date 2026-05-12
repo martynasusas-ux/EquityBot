@@ -74,31 +74,110 @@ def _fmt_b(v) -> str:
     return f"{v/1000:,.1f}B" if abs(v) >= 1000 else f"{v:,.0f}M"
 
 
+# ── Pricing constants ─────────────────────────────────────────────────────────
+# Claude Sonnet 4.6
+_C_INPUT       = 3.00  / 1_000_000
+_C_CACHE_WRITE = 3.75  / 1_000_000
+_C_CACHE_READ  = 0.30  / 1_000_000
+_C_OUTPUT      = 15.00 / 1_000_000
+# GPT-4o
+_O_INPUT       = 2.50  / 1_000_000
+_O_CACHE_READ  = 1.25  / 1_000_000   # GPT-4o cached input
+_O_OUTPUT      = 10.00 / 1_000_000
+
+
+def _claude_cost(u: dict) -> float:
+    return (
+        (u.get("input_tokens", 0) or 0)                * _C_INPUT +
+        (u.get("cache_creation_input_tokens", 0) or 0) * _C_CACHE_WRITE +
+        (u.get("cache_read_input_tokens", 0) or 0)     * _C_CACHE_READ +
+        (u.get("output_tokens", 0) or 0)               * _C_OUTPUT
+    )
+
+
+def _openai_cost(u: dict) -> float:
+    return (
+        (u.get("input_tokens", 0) or 0)            * _O_INPUT +
+        (u.get("cache_read_input_tokens", 0) or 0) * _O_CACHE_READ +
+        (u.get("output_tokens", 0) or 0)           * _O_OUTPUT
+    )
+
+
 def _show_token_usage(usage: dict) -> None:
-    """Display a compact token usage chip after an LLM call (Claude only)."""
+    """Compact token line shown inline during generation (Claude single-model)."""
     if not usage:
         return
-    inp   = usage.get("input_tokens", 0)
-    out   = usage.get("output_tokens", 0)
-    hit   = usage.get("cache_read_input_tokens", 0)
-    wrote = usage.get("cache_creation_input_tokens", 0)
-
+    inp  = usage.get("input_tokens", 0) or 0
+    out  = usage.get("output_tokens", 0) or 0
+    hit  = usage.get("cache_read_input_tokens", 0) or 0
+    cost = _claude_cost(usage)
+    parts = [f"📥 {inp+hit:,} in", f"📤 {out:,} out"]
     if hit:
-        # Cache was warm — show savings
-        saved_pct = round(hit / max(inp + hit, 1) * 100)
-        st.caption(
-            f"🪙 Tokens — in: {inp:,} · out: {out:,} · "
-            f"📦 cache read: {hit:,} ({saved_pct}% saved) · "
-            f"cache write: {wrote:,}"
+        parts.append(f"⚡ {hit:,} cached")
+    parts.append(f"💰 ~${cost:.4f}")
+    st.caption("🪙 " + "  ·  ".join(parts))
+
+
+def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
+    """
+    Render a styled cost summary card after report generation.
+    Called once and stored in report_result for persistent display.
+    """
+    c_cost = _claude_cost(usage_claude)
+    o_cost = _openai_cost(usage_openai) if usage_openai else 0.0
+    total  = c_cost + o_cost
+
+    c_in  = usage_claude.get("input_tokens", 0) or 0
+    c_cw  = usage_claude.get("cache_creation_input_tokens", 0) or 0
+    c_cr  = usage_claude.get("cache_read_input_tokens", 0) or 0
+    c_out = usage_claude.get("output_tokens", 0) or 0
+
+    lines = []
+
+    # Claude row
+    c_parts = [f"in {c_in+c_cw+c_cr:,}"]
+    if c_cr:
+        c_parts.append(f"⚡ {c_cr:,} cached")
+    if c_cw:
+        c_parts.append(f"✍ {c_cw:,} written")
+    c_parts.append(f"out {c_out:,}")
+    lines.append(
+        f"<b>Claude Sonnet 4.6</b>  ·  "
+        + "  ·  ".join(c_parts)
+        + f"  →  <b>${c_cost:.4f}</b>"
+    )
+
+    # GPT-4o row (adversarial only)
+    if usage_openai:
+        o_in  = usage_openai.get("input_tokens", 0) or 0
+        o_cr  = usage_openai.get("cache_read_input_tokens", 0) or 0
+        o_out = usage_openai.get("output_tokens", 0) or 0
+        o_parts = [f"in {o_in+o_cr:,}"]
+        if o_cr:
+            o_parts.append(f"⚡ {o_cr:,} cached")
+        o_parts.append(f"out {o_out:,}")
+        lines.append(
+            f"<b>GPT-4o</b>  ·  "
+            + "  ·  ".join(o_parts)
+            + f"  →  <b>${o_cost:.4f}</b>"
         )
-    elif wrote:
-        # First call — schema written to cache for next run
-        st.caption(
-            f"🪙 Tokens — in: {inp:,} · out: {out:,} · "
-            f"📦 cache write: {wrote:,} (saved for next run)"
-        )
-    else:
-        st.caption(f"🪙 Tokens — in: {inp:,} · out: {out:,}")
+
+    rows_html = "<br>".join(lines)
+    total_html = (
+        f"<b>Total: ${total:.4f}</b>"
+        if usage_openai
+        else ""
+    )
+
+    st.markdown(
+        f"<div style='background:#F8FAFC;border:1px solid #D0DFF0;border-radius:6px;"
+        f"padding:8px 14px;margin:6px 0;font-size:12px;color:#334155;line-height:1.8;'>"
+        f"💰 <b>LLM cost this report</b><br>"
+        f"{rows_html}"
+        + (f"<br><span style='color:#1B3F6E'>{total_html}</span>" if total_html else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ── Ticker search helper ──────────────────────────────────────────────────────
@@ -1060,15 +1139,28 @@ if generate_clicked and ticker_input:
                 expanded=False,
             )
 
+            # ── Collect token usage for cost display ─────────────────────────
+            if adv_result is not None:
+                _usage_claude = adv_result.claude_usage
+                _usage_openai = adv_result.openai_usage
+            elif report_type in ("kepler_summary", "eodhd_sheet"):
+                _usage_claude = {}
+                _usage_openai = None
+            else:
+                _usage_claude = llm.last_usage if hasattr(llm, "last_usage") else {}
+                _usage_openai = None
+
             # Store result
             st.session_state.report_result = {
-                "pdf_path":    pdf_path,
-                "company":     company,
-                "analysis":    analysis,
-                "report_type": report_type,
-                "rec":         analysis.get("recommendation", "HOLD"),
-                "extra":       extra,
-                "adversarial": adv_result,
+                "pdf_path":     pdf_path,
+                "company":      company,
+                "analysis":     analysis,
+                "report_type":  report_type,
+                "rec":          analysis.get("recommendation", "HOLD"),
+                "extra":        extra,
+                "adversarial":  adv_result,
+                "usage_claude": _usage_claude,
+                "usage_openai": _usage_openai,
             }
 
             # Add to recent reports
@@ -1180,6 +1272,12 @@ if st.session_state.report_result:
             st.caption(f"Framework: **{fw_label}**  ·  "
                        f"Data: {company.year_range()}  ·  "
                        f"Sources: {', '.join(company.data_sources)}")
+
+    # ── LLM cost summary ─────────────────────────────────────────────────────
+    _uc = res.get("usage_claude", {})
+    _uo = res.get("usage_openai")
+    if _uc or _uo:
+        _cost_block(_uc, _uo)
 
     st.divider()
 

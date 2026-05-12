@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 # ── Result container ──────────────────────────────────────────────────────────
 
+def _add_to_usage(acc: dict, u: dict) -> None:
+    """Merge one call's last_usage dict into an accumulator."""
+    for k in ("input_tokens", "output_tokens",
+              "cache_creation_input_tokens", "cache_read_input_tokens"):
+        acc[k] = acc.get(k, 0) + (u.get(k, 0) or 0)
+
+
 @dataclass
 class AdversarialResult:
     """
@@ -41,6 +48,9 @@ class AdversarialResult:
     primary_rec:           str  = "HOLD"
     secondary_rec:         str  = "HOLD"
     recs_agree:            bool = False
+    # Cumulative token usage per provider (all steps combined)
+    claude_usage:          dict = field(default_factory=dict)   # {input, output, cache_write, cache_read}
+    openai_usage:          dict = field(default_factory=dict)   # {input, output}
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -77,11 +87,16 @@ class AdversarialEngine:
         Full adversarial pipeline. Returns AdversarialResult.
         Primary = Claude, Secondary = GPT-4o.
         """
+        claude_usage: dict = {}
+        openai_usage: dict = {}
+
         logger.info("[Adversarial] Step 1/4 — Claude independent analysis...")
         primary = self.claude.generate_json(user_prompt, system_prompt, max_tokens)
+        _add_to_usage(claude_usage, self.claude.last_usage)
 
         logger.info("[Adversarial] Step 2/4 — GPT-4o independent analysis...")
         secondary = self.gpt4o.generate_json(user_prompt, system_prompt, max_tokens)
+        _add_to_usage(openai_usage, self.gpt4o.last_usage)
 
         logger.info("[Adversarial] Step 3/4 — Cross-critique...")
         critique_of_primary   = self._critique(
@@ -90,12 +105,15 @@ class AdversarialEngine:
             comparator=secondary,
             critic=self.gpt4o,
         )
+        _add_to_usage(openai_usage, self.gpt4o.last_usage)
+
         critique_of_secondary = self._critique(
             analyst_label="GPT-4o",
             subject=secondary,
             comparator=primary,
             critic=self.claude,
         )
+        _add_to_usage(claude_usage, self.claude.last_usage)
 
         logger.info("[Adversarial] Step 4/4 — Comparing and merging...")
         consensus, contested = _deep_compare(primary, secondary, report_type)
@@ -115,6 +133,8 @@ class AdversarialEngine:
             primary_rec=p_rec,
             secondary_rec=s_rec,
             recs_agree=(p_rec.strip().upper() == s_rec.strip().upper()),
+            claude_usage=claude_usage,
+            openai_usage=openai_usage,
         )
 
     # ── Private ───────────────────────────────────────────────────────────────

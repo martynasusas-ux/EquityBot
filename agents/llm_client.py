@@ -284,6 +284,16 @@ class LLMClient:
                 temperature=temperature,
                 messages=messages,
             )
+            # Track token usage (same dict shape as Claude for consistency)
+            if resp.usage:
+                self.last_usage = {
+                    "input_tokens":                resp.usage.prompt_tokens,
+                    "output_tokens":               resp.usage.completion_tokens,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens":     getattr(resp.usage, "prompt_tokens_details", None)
+                                                   and getattr(resp.usage.prompt_tokens_details,
+                                                               "cached_tokens", 0) or 0,
+                }
             return resp.choices[0].message.content
         except Exception as e:
             raise RuntimeError(f"OpenAI API error: {e}")
