@@ -54,6 +54,10 @@ BASE_FONT      = 'Helvetica'
 BOLD_FONT      = 'Helvetica-Bold'
 OBLIQUE_FONT   = 'Helvetica-Oblique'
 
+# ── EODHD verified-data checkmark ─────────────────────────────────────────────
+# ZapfDingbats '4' = ✓ checkmark (built-in PDF font, no TTF needed)
+_EODHD_CHECK = ' <font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+
 def _styles(company_name: str = "") -> dict:
     """Build the style dictionary for this report."""
     ss = getSampleStyleSheet()
@@ -178,8 +182,13 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     show_years = list(reversed(hist_years))  # chronological order
     est_year   = (show_years[-1] + 1) if show_years else datetime.utcnow().year
 
-    # Column headers
-    year_headers = [str(y) for y in show_years] + [f"{est_year}E"]
+    # Column headers — append ✓ (ZapfDingbats) when the year is EODHD-sourced
+    def _yr_hdr(y: int) -> str:
+        af = company.annual_financials.get(y)
+        check = _EODHD_CHECK if (af and getattr(af, "source", "") == "eodhd") else ""
+        return str(y) + check
+
+    year_headers = [_yr_hdr(y) for y in show_years] + [f"{est_year}E"]
     col_headers  = [Paragraph("", styles["table_header"])] + [
         Paragraph(y, styles["table_header"]) for y in year_headers
     ]
@@ -232,7 +241,7 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     # Update est_year to use forward_estimates.year if available
     if fe is not None:
         est_year = fe.year
-        year_headers = [str(y) for y in show_years] + [f"{est_year}E"]
+        year_headers = [_yr_hdr(y) for y in show_years] + [f"{est_year}E"]
         col_headers = [Paragraph("", styles["table_header"])] + [
             Paragraph(y, styles["table_header"]) for y in year_headers
         ]
@@ -590,6 +599,15 @@ class OverviewPDFGenerator:
         except Exception as e:
             logger.error(f"[PDF] Financial table error: {e}")
             el.append(Paragraph(f"Financial table unavailable: {e}", styles["body_small"]))
+        # EODHD legend — only show if at least one year has EODHD data
+        if any(getattr(af, "source", "") == "eodhd"
+               for af in company.annual_financials.values()):
+            el.append(Paragraph(
+                '<font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
+                " = verified EODHD data",
+                ParagraphStyle("eo_legend", fontName=BASE_FONT, fontSize=6,
+                               textColor=MGRAY, spaceBefore=2, leading=8),
+            ))
 
         # Estimate footnote
         fe = company.forward_estimates

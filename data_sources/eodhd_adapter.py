@@ -677,7 +677,9 @@ class EODHDAdapter:
         candidates.sort(key=lambda x: x[0])
         target_year, entry = candidates[0]
 
-        rev = self._to_m(entry.get("revenueEstimateAvg"))
+        # revenueEstimateAvg in Earnings.Trend is already in millions (confirmed by
+        # RHM.DE returning ~13 instead of 13_432_000_000). Use _parse_float, not _to_m.
+        rev = self._parse_float(entry.get("revenueEstimateAvg"))
         eps = self._parse_float(entry.get("earningsEstimateAvg"))
 
         if rev is None and eps is None:
