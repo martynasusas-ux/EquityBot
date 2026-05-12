@@ -168,5 +168,6 @@ if _users:
 pg = st.navigation([
     st.Page("pages/report_generator.py", title="Report Generator", icon="📊"),
     st.Page("pages/model_editing.py",    title="Model Editing",    icon="⚙️"),
+    st.Page("pages/app_editing.py",      title="App Editor",       icon="🛠️"),
 ])
 pg.run()
