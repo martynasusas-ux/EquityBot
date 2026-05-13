@@ -306,6 +306,27 @@ class DataManager:
                 else:
                     logger.warning(f"[DataManager] FMP failed: {result.error}")
 
+        # ── Stooq fallback for current_price ──────────────────────────────────
+        # When yfinance fails (Streamlit Cloud → Yahoo IP block) and the EODHD
+        # plan doesn't include live quotes, current_price stays None. Stooq
+        # provides free EOD close prices for global exchanges with no API key
+        # — typically 1 trading day fresh, far better than no price at all.
+        if company.current_price is None:
+            try:
+                from .stooq_adapter import fetch_stooq_close
+                stooq_price = fetch_stooq_close(ticker)
+                if stooq_price is not None:
+                    company.current_price = stooq_price
+                    logger.info(f"[DataManager] Stooq fallback: {ticker} price = {stooq_price}")
+                    # Recompute market_cap if shares are available and EODHD
+                    # didn't supply one. (When EODHD provides market_cap, we
+                    # keep that — it's coherent with EODHD's snapshot.)
+                    if company.market_cap is None and company.shares_outstanding:
+                        # shares_outstanding stored in millions
+                        company.market_cap = stooq_price * company.shares_outstanding
+            except Exception as e:
+                logger.debug(f"[DataManager] Stooq fallback failed: {e}")
+
         # ── Final derived calculations ─────────────────────────────────────────
         company.calculate_current_ratios()
         for af in company.annual_financials.values():

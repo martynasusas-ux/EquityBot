@@ -287,17 +287,13 @@ class EODHDAdapter:
         else:
             company.market_cap = self._to_m(highlights.get("MarketCapitalization"))
 
-        # Current price: EODHD fundamentals endpoint doesn't return a live quote,
-        # but we can derive it from MarketCap / SharesOutstanding when both are
-        # available. This is critical on Streamlit Cloud where yfinance often
-        # gets blocked by Yahoo and EODHD is the only working source.
-        shares_raw_full = self._parse_float(
-            (raw.get("SharesStats") or {}).get("SharesOutstanding")
-        )
-        if (company.market_cap is not None and shares_raw_full
-                and shares_raw_full > 0):
-            # market_cap is in millions, shares_raw_full is in full units
-            company.current_price = (company.market_cap * 1_000_000) / shares_raw_full
+        # NOTE: We deliberately do NOT set company.current_price here.
+        # EODHD's fundamentals endpoint doesn't return a live quote, and the
+        # most-recent MarketCapitalization is a snapshot that may be days old
+        # — deriving price = MarketCap/Shares from it produces a value that
+        # looks live but can be off by several percent from the actual quote.
+        # current_price is set by yfinance (Tier 1a) or, if yfinance fails,
+        # by the Stooq fallback in data_manager (free EOD close, ~1 day fresh).
 
         company.pe_ratio      = self._parse_float(highlights.get("PERatio"))
         company.roe           = self._parse_float(highlights.get("ReturnOnEquityTTM"))
@@ -778,6 +774,7 @@ class EODHDAdapter:
         """Convert raw (full-unit) value to millions."""
         v = self._parse_float(val)
         return v / 1_000_000 if v is not None else None
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
