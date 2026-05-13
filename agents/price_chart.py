@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 # ── Visual styling ────────────────────────────────────────────────────────────
-LINE_COLOR    = "#1B3F6E"   # navy — matches report brand
-FILL_COLOR    = "#1B3F6E"
+LINE_COLOR    = "#003F54"   # Pantone 303 — ink-saving brand colour
+FILL_COLOR    = "#003F54"
 GRID_COLOR    = "#DDDDDD"
 TICK_COLOR    = "#666666"
 LABEL_COLOR   = "#333333"
-TITLE_COLOR   = "#1B3F6E"
+TITLE_COLOR   = "#003F54"
 LATEST_COLOR  = "#C9843E"   # orange highlight for the final marker
 
 

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from agents.adversarial import AdversarialResult
 
 # ── Palette (matches pdf_overview.py) ────────────────────────────────────────
-NAVY   = HexColor('#1B3F6E')
+NAVY   = HexColor('#003F54')   # Pantone 303 — ink-saving brand colour
 BLUE   = HexColor('#2E75B6')
 LBLUE  = HexColor('#D6E8F7')
 LLBLUE = HexColor('#EEF5FB')

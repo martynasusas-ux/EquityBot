@@ -41,7 +41,7 @@ MB = 12 * mm
 CW = W - ML - MR          # ~565 pts
 
 # ── Colours ───────────────────────────────────────────────────────────────────
-NAVY    = HexColor("#1B3F6E")
+NAVY    = HexColor("#003F54")   # Pantone 303 — ink-saving brand colour
 TEAL    = HexColor("#1A6E5A")
 LGRAY   = HexColor("#F5F5F5")
 DGRAY   = HexColor("#333333")
@@ -59,7 +59,7 @@ SCFILL  = HexColor("#FDF4EC")   # light orange for scorecard header
 
 GREEN_HEX  = "#1A7E3D"
 RED_HEX    = "#C0392B"
-NAVY_HEX   = "#1B3F6E"
+NAVY_HEX   = "#003F54"
 MGRAY_HEX  = "#666666"
 ORANGE_HEX = "#C9843E"
 TEAL_HEX   = "#1A6E5A"

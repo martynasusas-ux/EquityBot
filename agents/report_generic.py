@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 
 # ── Colour constants (match EquityBot visual identity) ────────────────────────
-_NAV   = "#1B3F6E"   # navy — headers
+_NAV   = "#003F54"   # Pantone 303 — ink-saving brand colour
 _LIGHT = "#EEF5FB"   # light blue — backgrounds
 _MID   = "#D6E8F7"   # mid blue — alternate rows
 _GREY  = "#F5F5F5"   # light grey

@@ -36,7 +36,7 @@ MB      = 14 * mm
 CW      = W - ML - MR
 
 # ── Colours ───────────────────────────────────────────────────────────────────
-NAVY    = HexColor('#1B3F6E')
+NAVY    = HexColor('#003F54')   # Pantone 303 — ink-saving brand colour
 BLUE    = HexColor('#2E75B6')
 LBLUE   = HexColor('#D6E8F7')
 LLBLUE  = HexColor('#EEF5FB')
@@ -118,17 +118,15 @@ def _styles() -> dict:
 # ── Page header ───────────────────────────────────────────────────────────────
 
 def _draw_header(canvas, doc, company: CompanyData, report_date: str):
+    """Ink-saving header: white background, navy (Pantone 303) text."""
     canvas.saveState()
 
     canvas.setFillColor(NAVY)
-    canvas.rect(0, H - 26*mm, W, 26*mm, fill=1, stroke=0)
-
-    canvas.setFillColor(white)
     canvas.setFont(BOLD_FONT, 13)
     canvas.drawString(ML, H - 10*mm, company.name or company.ticker)
 
     canvas.setFont(BASE_FONT, 8)
-    canvas.setFillColor(LBLUE)
+    canvas.setFillColor(MGRAY)
     canvas.drawString(ML, H - 15.5*mm,
         f"Gravity Taxers Analysis  |  {company.sector or ''}  |  {company.exchange or ''}")
     canvas.drawString(ML, H - 20.5*mm, f"Report date: {report_date}")
@@ -138,11 +136,10 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
     cap_str   = (f"Mkt Cap {company.market_cap/1000:,.1f}B {company.currency or ''}"
                  if company.market_cap else "")
     canvas.setFont(BOLD_FONT, 9)
-    canvas.setFillColor(white)
+    canvas.setFillColor(NAVY)
     canvas.drawRightString(W - MR, H - 10*mm, price_str)
     canvas.setFont(BASE_FONT, 7.5)
-    # Use white (not LBLUE) so the market cap is readable on the navy band.
-    canvas.setFillColor(white)
+    canvas.setFillColor(NAVY)
     canvas.drawRightString(W - MR, H - 15.5*mm, cap_str)
     canvas.drawRightString(W - MR, H - 20.5*mm, company.ticker)
 

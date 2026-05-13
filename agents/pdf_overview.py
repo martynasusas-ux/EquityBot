@@ -38,7 +38,9 @@ MB      = 14*mm           # bottom margin
 CW      = W - ML - MR     # content width ≈ 481 pts
 
 # ── Colour palette ────────────────────────────────────────────────────────────
-NAVY    = HexColor('#1B3F6E')
+# Pantone 303 / RGB(0, 63, 84). Ink-saving: header band is white, brand text
+# is rendered in this dark teal/navy.
+NAVY    = HexColor('#003F54')
 BLUE    = HexColor('#2E75B6')
 LBLUE   = HexColor('#D6E8F7')   # table header bg / alt rows
 LLBLUE  = HexColor('#EEF5FB')   # very light blue alt row
@@ -115,16 +117,16 @@ def _styles(company_name: str = "") -> dict:
 # ── Page header (drawn on canvas, not as flowable) ────────────────────────────
 
 def _draw_header(canvas, doc, company: CompanyData, report_date: str):
-    """Drawn on every page: company name bar + key stats."""
+    """Drawn on every page: company name bar + key stats.
+
+    Ink-saving design: white background, navy (Pantone 303) text and a thin
+    bottom rule. No filled colour band.
+    """
     canvas.saveState()
 
-    # Navy band across the top
-    canvas.setFillColor(NAVY)
-    canvas.rect(0, H - 26*mm, W, 26*mm, fill=1, stroke=0)
-
-    # Company name — large, white
+    # Company name — large, navy on white
     canvas.setFont(BOLD_FONT, 14)
-    canvas.setFillColor(white)
+    canvas.setFillColor(NAVY)
     name = company.name or company.ticker
     canvas.drawString(ML, H - 12*mm, name)
 
@@ -134,7 +136,7 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
         company.exchange, company.ticker
     ]))
     canvas.setFont(BASE_FONT, 8)
-    canvas.setFillColor(LBLUE)
+    canvas.setFillColor(MGRAY)
     canvas.drawString(ML, H - 18.5*mm, subtitle)
 
     # Right side: price | mkt cap | date
@@ -146,14 +148,14 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
     date_str   = f"Report: {report_date}"
 
     canvas.setFont(BOLD_FONT, 8.5)
-    canvas.setFillColor(white)
+    canvas.setFillColor(NAVY)
     right_x = W - MR
     canvas.drawRightString(right_x, H - 10*mm, price_str)
     canvas.setFont(BASE_FONT, 8)
-    # Keep market cap in white for high contrast on the navy band.
+    canvas.setFillColor(NAVY)
     canvas.drawRightString(right_x, H - 15.5*mm, mcap_str)
     canvas.setFont(BASE_FONT, 7.5)
-    canvas.setFillColor(LBLUE)
+    canvas.setFillColor(MGRAY)
     canvas.drawRightString(right_x, H - 20.5*mm, date_str)
 
     # Thin separator line below header

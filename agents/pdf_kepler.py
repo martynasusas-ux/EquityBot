@@ -39,7 +39,7 @@ MB = 12 * mm                      # bottom margin
 CW = W - ML - MR                  # content width ≈ 565 pts
 
 # ── Colour palette ────────────────────────────────────────────────────────────
-NAVY    = HexColor("#1B3F6E")
+NAVY    = HexColor("#003F54")   # Pantone 303 — ink-saving brand colour
 ORANGE  = HexColor("#C9843E")      # Kepler section-title orange
 GOLD    = HexColor("#D4A35A")      # lighter gold for alt use
 LGRAY   = HexColor("#F5F5F5")      # alt row fill
@@ -58,7 +58,7 @@ HDRFILL = HexColor("#E8EFF8")      # column header background
 # separately rather than calling .hexval() at runtime).
 GREEN_HEX = "#1A7E3D"
 RED_HEX   = "#C0392B"
-NAVY_HEX  = "#1B3F6E"
+NAVY_HEX  = "#003F54"
 MGRAY_HEX = "#666666"
 ESTCOL_HEX = "#2E4A8A"
 
