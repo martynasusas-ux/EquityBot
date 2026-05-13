@@ -77,7 +77,8 @@ def _styles() -> dict:
             leading=11, alignment=TA_JUSTIFY,
         ),
         "table_header": S("th",
-            fontName=BOLD_FONT, fontSize=7.5, textColor=white,
+            # Ink-saving: navy text on white background (was white-on-navy)
+            fontName=BOLD_FONT, fontSize=7.5, textColor=NAVY,
             alignment=TA_CENTER, leading=10,
         ),
         "table_label": S("tl",
