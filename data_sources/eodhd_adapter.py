@@ -433,6 +433,15 @@ class EODHDAdapter:
         except Exception as e:
             logger.warning(f"[eodhd] Could not parse Earnings.Annual for {ticker}: {e}")
 
+        # ── Per-year shares outstanding from outstandingShares.annual ─────────
+        # EODHD's balance-sheet "commonStock" is par-value capital (wrong as a
+        # share count). The dedicated outstandingShares block has correct
+        # per-year totals back to ~2009 — populate them on every annual row.
+        try:
+            self._parse_per_year_shares(raw, company)
+        except Exception as e:
+            logger.warning(f"[eodhd] Could not parse outstandingShares for {ticker}: {e}")
+
         # ── Forward dividend: fill most recent year's DPS if missing ──────────
         # Spring-payer fix: for companies that pay the prior fiscal year's
         # dividend after fiscal year-end (e.g. German companies paying in May),
@@ -660,6 +669,47 @@ class EODHDAdapter:
     # ──────────────────────────────────────────────────────────────────────────
     # Actual EPS from Earnings.Annual
     # ──────────────────────────────────────────────────────────────────────────
+
+    def _parse_per_year_shares(self, raw: dict, company: CompanyData) -> None:
+        """
+        Populate AnnualFinancials.shares_outstanding from EODHD's
+        outstandingShares.annual block.
+
+        Block structure (EODHD returns it as an ordered dict):
+            {"0": {"date": "2026", "dateFormatted": "2026-12-31",
+                   "sharesMln": "46.6700", "shares": 46670000}, ...}
+
+        We prefer the `shares` integer (full units) and convert to millions
+        to match the AnnualFinancials convention (which historically stored
+        per-year shares in millions on rows yfinance populated).
+        """
+        block = (raw.get("outstandingShares") or {}).get("annual") or {}
+        if not isinstance(block, dict):
+            return
+        for _key, row in block.items():
+            if not isinstance(row, dict):
+                continue
+            yr = _year_from_date(row.get("dateFormatted") or row.get("date"))
+            if not yr:
+                continue
+            shares = self._parse_float(row.get("shares"))
+            if shares is None:
+                shares_mln = self._parse_float(row.get("sharesMln"))
+                if shares_mln is None:
+                    continue
+                shares_in_m = shares_mln
+            else:
+                shares_in_m = shares / 1_000_000
+            # Lazy-create the AnnualFinancials row if there's no income-
+            # statement data for this year (rare — but defensive).
+            af = company.annual_financials.get(yr)
+            if af is None:
+                from .base import AnnualFinancials
+                af = AnnualFinancials(year=yr)
+                af.source = "eodhd"
+                company.annual_financials[yr] = af
+            af.shares_outstanding = shares_in_m
+            logger.debug(f"[eodhd] FY{yr} shares={shares_in_m:.3f}M")
 
     def _parse_earnings_annual_eps(self, raw: dict, company: CompanyData) -> None:
         """

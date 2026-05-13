@@ -347,9 +347,42 @@ class DataManager:
             except Exception as e:
                 logger.debug(f"[DataManager] Stooq fallback failed: {e}")
 
+        # ── Historical year-end prices via yfinance + Alpha Vantage ───────────
+        # On Streamlit Cloud Yahoo Finance often blocks .info() but
+        # Ticker.history() uses a different endpoint that sometimes still
+        # responds. If yfinance fails entirely, Alpha Vantage's
+        # TIME_SERIES_MONTHLY endpoint covers 20+ years and works on cloud
+        # (free tier, user already has key configured).
+        missing_pye_years = [
+            yr for yr, af in company.annual_financials.items()
+            if af.price_year_end is None
+        ]
+        if missing_pye_years:
+            ye_closes = self._fetch_historical_year_end_closes(ticker)
+            if ye_closes:
+                filled = 0
+                for yr in missing_pye_years:
+                    px = ye_closes.get(yr)
+                    if px:
+                        company.annual_financials[yr].price_year_end = px
+                        filled += 1
+                logger.info(
+                    f"[DataManager] Year-end prices backfilled: "
+                    f"{filled}/{len(missing_pye_years)} years"
+                )
+
         # ── Final derived calculations ─────────────────────────────────────────
         company.calculate_current_ratios()
         for af in company.annual_financials.values():
+            # Derived ratios depend on price_year_end + shares_outstanding.
+            # Recompute market_cap as well now that both may be available.
+            if af.market_cap is None and af.price_year_end and af.shares_outstanding:
+                shares_m = (
+                    af.shares_outstanding / 1_000_000
+                    if af.shares_outstanding > 1_000
+                    else af.shares_outstanding
+                )
+                af.market_cap = af.price_year_end * shares_m
             af.calculate_derived()
 
         # ── Fill scalar margins from latest annual data — only when EODHD didn't ──
@@ -574,6 +607,94 @@ class DataManager:
     # ──────────────────────────────────────────────────────────────────────────
     # Cache
     # ──────────────────────────────────────────────────────────────────────────
+
+    def _fetch_historical_year_end_closes(self, ticker: str) -> dict:
+        """
+        Return {year: last_close_price} for the longest history we can get.
+
+        Tries yfinance.Ticker.history(period='max') first — works locally and
+        sometimes on Streamlit Cloud since .history uses Yahoo's chart endpoint
+        which is less restricted than the quoteSummary endpoint that .info
+        relies on. Falls back to Alpha Vantage TIME_SERIES_MONTHLY with a few
+        candidate symbol formats for non-US exchanges.
+        Returns an empty dict on total failure.
+        """
+        # Tier 1: yfinance
+        try:
+            import yfinance as yf
+            df = yf.Ticker(ticker).history(period="max", interval="1mo")
+            if df is not None and not df.empty and "Close" in df.columns:
+                ye = {}
+                for ts, row in df.iterrows():
+                    yr = ts.year
+                    close = float(row["Close"])
+                    if close > 0:
+                        ye[yr] = close   # later months overwrite earlier ones
+                if ye:
+                    logger.info(f"[DataManager] yfinance year-end: {len(ye)} years for {ticker}")
+                    return ye
+        except Exception as e:
+            logger.debug(f"[DataManager] yfinance year-end fetch failed: {e}")
+
+        # Tier 2: Alpha Vantage TIME_SERIES_MONTHLY
+        try:
+            import requests
+            from config import ALPHA_VANTAGE_API_KEY
+            if not ALPHA_VANTAGE_API_KEY:
+                return {}
+
+            # AV symbol candidates: stripped base for US, +.DEX/.FRK/.LON/etc.
+            # for European listings. Yahoo suffix mapping ↦ AV suffix.
+            yf_to_av = {
+                ".DE": "DEX", ".F": "FRK", ".L": "LON", ".PA": "PAR",
+                ".AS": "AMS", ".BR": "BRU", ".MI": "MIL", ".MC": "MAD",
+                ".HE": "HEL", ".ST": "STO", ".OL": "OSL", ".CO": "CPH",
+                ".SW": "SWX", ".VI": "VIE", ".WA": "WSE", ".LS": "LIS",
+                ".TO": "TRT", ".HK": "HKG", ".AX": "ASX",
+            }
+            dot = ticker.rfind(".")
+            if dot == -1:
+                candidates = [ticker]              # US — base symbol
+            else:
+                base, suffix = ticker[:dot], ticker[dot:]
+                av_suffix = yf_to_av.get(suffix.upper())
+                candidates = [f"{base}.{av_suffix}"] if av_suffix else []
+                candidates.append(base)            # final fallback
+
+            for sym in candidates:
+                params = {
+                    "function": "TIME_SERIES_MONTHLY",
+                    "symbol": sym,
+                    "apikey": ALPHA_VANTAGE_API_KEY,
+                }
+                r = requests.get("https://www.alphavantage.co/query",
+                                 params=params, timeout=20)
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+                series = data.get("Monthly Time Series")
+                if not isinstance(series, dict) or not series:
+                    continue
+                ye = {}
+                for date_str, row in series.items():
+                    try:
+                        yr = int(date_str[:4])
+                        close = float(row.get("4. close", 0))
+                        if close > 0:
+                            # AV is sorted desc, so first hit per year is the
+                            # latest available month → year-end close.
+                            ye.setdefault(yr, close)
+                    except (ValueError, TypeError):
+                        continue
+                if ye:
+                    logger.info(
+                        f"[DataManager] AV year-end ({sym}): {len(ye)} years"
+                    )
+                    return ye
+        except Exception as e:
+            logger.debug(f"[DataManager] AV year-end fetch failed: {e}")
+
+        return {}
 
     def _cache_path(self, ticker: str) -> Path:
         safe = ticker.replace(".", "_").replace("/", "_")

@@ -120,3 +120,66 @@ def fetch_stooq_close(yf_ticker: str, timeout: int = 15) -> Optional[float]:
     except Exception as e:
         logger.warning(f"[stooq] fetch failed for {yf_ticker} ({stooq_ticker}): {e}")
         return None
+
+
+def fetch_stooq_year_end_closes(
+    yf_ticker: str,
+    years_back: int = 11,
+    timeout: int = 20,
+) -> dict[int, float]:
+    """
+    Return {year: dec_close_price} mapping for the most recent N fiscal years.
+
+    Hits Stooq's daily historical CSV endpoint, finds the last trading day's
+    close in each calendar year. Empty dict on failure.
+
+    Used by DataManager to backfill historical year-end prices on
+    AnnualFinancials rows so the Investment Memo's P/E, EV/EBIT, EV/Sales,
+    FCF yield and market cap derivations can populate for years older than
+    yfinance's 5-year window.
+    """
+    from datetime import datetime, timedelta
+
+    stooq_ticker = _yf_to_stooq(yf_ticker)
+    end = datetime.utcnow()
+    start = end - timedelta(days=years_back * 365 + 30)
+    url = (
+        f"https://stooq.com/q/d/l/?s={stooq_ticker}&i=d"
+        f"&d1={start.strftime('%Y%m%d')}&d2={end.strftime('%Y%m%d')}"
+    )
+    try:
+        resp = requests.get(url, headers=_STOOQ_HEADERS, timeout=timeout)
+        if resp.status_code != 200:
+            logger.warning(f"[stooq] history {yf_ticker} HTTP {resp.status_code}")
+            return {}
+        lines = resp.text.strip().splitlines()
+        if len(lines) < 2:
+            return {}
+        header = [c.strip().lower() for c in lines[0].split(",")]
+        if "date" not in header or "close" not in header:
+            return {}
+        i_date = header.index("date")
+        i_close = header.index("close")
+        # Walk through rows, keep the latest close per calendar year.
+        latest_per_year: dict[int, tuple[str, float]] = {}
+        for ln in lines[1:]:
+            cols = ln.split(",")
+            if len(cols) <= max(i_date, i_close):
+                continue
+            date_str = cols[i_date]
+            try:
+                yr = int(date_str[:4])
+                price = float(cols[i_close])
+            except ValueError:
+                continue
+            if price <= 0:
+                continue
+            prev = latest_per_year.get(yr)
+            if prev is None or date_str > prev[0]:
+                latest_per_year[yr] = (date_str, price)
+        out = {yr: p for yr, (_, p) in latest_per_year.items()}
+        logger.info(f"[stooq] year-end closes for {yf_ticker}: {len(out)} years")
+        return out
+    except Exception as e:
+        logger.warning(f"[stooq] history failed for {yf_ticker}: {e}")
+        return {}
