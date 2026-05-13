@@ -51,7 +51,7 @@ BORDER  = HexColor("#CCCCCC")
 GREEN   = HexColor("#1A7E3D")
 RED     = HexColor("#C0392B")
 ESTCOL  = HexColor("#2E4A8A")      # estimate column label colour (blue-ish)
-HDRFILL = HexColor("#E8EFF8")      # column header background
+HDRFILL = HexColor("#FFFFFF")      # column header fill — white to save ink
 
 # Plain hex strings for use inside Paragraph XML markup (ReportLab's
 # HexColor.hexval() returns "0xRRGGBB" not "#RRGGBB", so we keep these

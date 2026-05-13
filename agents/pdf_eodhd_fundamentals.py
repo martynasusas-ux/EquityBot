@@ -53,7 +53,7 @@ GREEN   = HexColor("#1A7E3D")
 RED     = HexColor("#C0392B")
 ORANGE  = HexColor("#C9843E")
 ESTCOL  = HexColor("#2E4A8A")
-HDRFILL = HexColor("#EBF0F8")
+HDRFILL = HexColor("#FFFFFF")   # column header fill — white to save ink
 SECFILL = HexColor("#F0F7F4")   # light teal tint for section headers
 SCFILL  = HexColor("#FDF4EC")   # light orange for scorecard header
 
@@ -295,16 +295,25 @@ def _section_row(label: str, ncols: int, styles: dict) -> list:
 
 
 def _table_style(nrows: int, ncols: int, alt: bool = True) -> TableStyle:
+    """
+    Ink-saving table style: white body, white header, thick navy underline
+    under the header row, grey horizontal rules between rows.
+    The `alt` flag is kept for backwards compatibility but no longer paints
+    the row background — readability is preserved by the row rules.
+    """
     cmds = [
         ("FONTNAME",     (0, 0), (-1, 0), BASE_FONT),
         ("FONTSIZE",     (0, 0), (-1, -1), 7.5),
         ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING",   (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
-        ("LINEBELOW",    (0, 0), (-1, 0),  0.4, BORDER),
-        ("ROWBACKGROUNDS", (0, 0), (-1, -1),
-         [LGRAY, white] if alt else [white]),
-        ("BACKGROUND",   (0, 0), (-1, 0),  HDRFILL),
+        # White everywhere — no alternating fill
+        ("BACKGROUND",   (0, 0), (-1, -1), white),
+        # Thick navy underline marks the header row instead of a fill
+        ("LINEBELOW",    (0, 0), (-1, 0),  1.2, NAVY),
+        # Subtle horizontal rules between body rows preserve readability
+        ("LINEBELOW",    (0, 1), (-1, -2), 0.25, BORDER),
+        ("TEXTCOLOR",    (0, 0), (-1, 0),  NAVY),
     ]
     return TableStyle(cmds)
 
@@ -814,9 +823,10 @@ def _page4(company: CompanyData, styles: dict) -> list:
         ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING",    (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("BACKGROUND",    (0, 0), (-1, 0),  HexColor("#E8F5E9")),
-        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [LGRAY, white]),
-        ("LINEBELOW",     (0, 0), (-1, 0),  0.5, GREEN),
+        # Ink-saving: white scorecard header with thicker green underline
+        ("BACKGROUND",    (0, 0), (-1, 0),  white),
+        ("BACKGROUND",    (0, 1), (-1, -1), white),
+        ("LINEBELOW",     (0, 0), (-1, 0),  1.2, GREEN),
         ("LINEBELOW",     (0, 1), (-1, -1), 0.3, RULE),
     ]))
     el.append(sc_t)

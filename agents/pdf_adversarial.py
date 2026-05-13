@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 NAVY   = HexColor('#003F54')   # Pantone 303 — ink-saving brand colour
 BLUE   = HexColor('#2E75B6')
 LBLUE  = HexColor('#D6E8F7')
-LLBLUE = HexColor('#EEF5FB')
+LLBLUE = HexColor('#FFFFFF')   # alt row fill — kept white to save ink
 GREEN  = HexColor('#1A7E3D')
 LGREEN = HexColor('#D4EDDA')
 RED    = HexColor('#C0392B')

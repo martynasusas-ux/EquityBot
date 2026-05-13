@@ -50,7 +50,7 @@ BORDER  = HexColor("#CCCCCC")
 GREEN   = HexColor("#1A7E3D")
 RED     = HexColor("#C0392B")
 ESTCOL  = HexColor("#2E4A8A")
-HDRFILL = HexColor("#EBF0F8")
+HDRFILL = HexColor("#FFFFFF")   # column header fill — white to save ink
 SECFILL = HexColor("#FDF4EC")   # light orange tint for section headers
 
 GREEN_HEX  = "#1A7E3D"

@@ -40,7 +40,7 @@ CW      = W - ML - MR          # ≈ 481 pts
 NAVY    = HexColor('#003F54')   # Pantone 303 — ink-saving brand colour
 BLUE    = HexColor('#2E75B6')
 LBLUE   = HexColor('#D6E8F7')
-LLBLUE  = HexColor('#EEF5FB')
+LLBLUE  = HexColor('#FFFFFF')   # alt row fill — kept white to save ink
 GREEN   = HexColor('#1A7E3D')
 LGREEN  = HexColor('#D4EDDA')
 RED     = HexColor('#C0392B')
@@ -237,14 +237,15 @@ def _fisher_table(points: list[dict], styles: dict, start: int, end: int) -> Tab
 
     rows = [header]
     style_cmds = [
-        ('BACKGROUND',   (0,0), (-1,0), NAVY),
-        ('TEXTCOLOR',    (0,0), (-1,0), white),
+        # Ink-saving header: white bg, navy text, thick navy underline
+        ('BACKGROUND',   (0,0), (-1,0), white),
+        ('TEXTCOLOR',    (0,0), (-1,0), NAVY),
         ('FONTNAME',     (0,0), (-1,0), BOLD_FONT),
         ('FONTSIZE',     (0,0), (-1,0), 7.5),
         ('ALIGN',        (0,0), (-1,0), 'CENTER'),
         ('VALIGN',       (0,0), (-1,-1),'MIDDLE'),
         ('GRID',         (0,0), (-1,-1), 0.3, BORDER),
-        ('LINEBELOW',    (0,0), (-1,0),  1.0, BLUE),
+        ('LINEBELOW',    (0,0), (-1,0),  1.4, NAVY),
         ('TOPPADDING',   (0,0), (-1,-1), 4),
         ('BOTTOMPADDING',(0,0), (-1,-1), 4),
         ('LEFTPADDING',  (0,0), (-1,-1), 5),
@@ -315,14 +316,15 @@ def _powers_table(powers: list[dict], styles: dict) -> Table:
 
     rows = [header]
     style_cmds = [
-        ('BACKGROUND',   (0,0), (-1,0), NAVY),
-        ('TEXTCOLOR',    (0,0), (-1,0), white),
+        # Ink-saving header: white bg, navy text, thick navy underline
+        ('BACKGROUND',   (0,0), (-1,0), white),
+        ('TEXTCOLOR',    (0,0), (-1,0), NAVY),
         ('FONTNAME',     (0,0), (-1,0), BOLD_FONT),
         ('FONTSIZE',     (0,0), (-1,0), 7.5),
         ('ALIGN',        (0,0), (-1,0), 'CENTER'),
         ('VALIGN',       (0,0), (-1,-1),'MIDDLE'),
         ('GRID',         (0,0), (-1,-1), 0.3, BORDER),
-        ('LINEBELOW',    (0,0), (-1,0),  1.0, BLUE),
+        ('LINEBELOW',    (0,0), (-1,0),  1.4, NAVY),
         ('TOPPADDING',   (0,0), (-1,-1), 4),
         ('BOTTOMPADDING',(0,0), (-1,-1), 4),
         ('LEFTPADDING',  (0,0), (-1,-1), 5),

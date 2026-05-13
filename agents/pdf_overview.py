@@ -43,7 +43,7 @@ CW      = W - ML - MR     # content width ≈ 481 pts
 NAVY    = HexColor('#003F54')
 BLUE    = HexColor('#2E75B6')
 LBLUE   = HexColor('#D6E8F7')   # table header bg / alt rows
-LLBLUE  = HexColor('#EEF5FB')   # very light blue alt row
+LLBLUE  = HexColor('#FFFFFF')   # alt row fill — kept white to save ink
 GREEN   = HexColor('#1A7E3D')
 RED     = HexColor('#C0392B')
 AMBER   = HexColor('#D68910')
@@ -322,29 +322,28 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     est_col = n_data_cols
 
     ts = [
-        # Header row — navy
-        ('BACKGROUND',  (0,0), (-1,0), NAVY),
-        ('TEXTCOLOR',   (0,0), (-1,0), white),
+        # Header row — white background, navy text + thick navy underline
+        ('BACKGROUND',  (0,0), (-1,0), white),
+        ('TEXTCOLOR',   (0,0), (-1,0), NAVY),
         ('FONTNAME',    (0,0), (-1,0), BOLD_FONT),
         ('FONTSIZE',    (0,0), (-1,0), 7.5),
         ('ALIGN',       (0,0), (-1,0), 'CENTER'),
         ('VALIGN',      (0,0), (-1,-1),'MIDDLE'),
-        ('ROWBACKGROUNDS',(0,1), (-1,-1), [white, LLBLUE]),
-        # Estimate column header — lighter blue to signal "forecast"
-        ('BACKGROUND',  (est_col,0), (est_col,0), BLUE),
-        # Estimate column body — very light tint
-        ('BACKGROUND',  (est_col,1), (est_col,-1), HexColor('#EEF5FB')),
-        # Label column
-        ('BACKGROUND',  (0,1), (0,-1), LGRAY),
+        # Body — plain white (no alternating fill, saves ink)
+        ('BACKGROUND',  (0,1), (-1,-1), white),
+        # Estimate column header — navy text, italic-style by colour
+        ('BACKGROUND',  (est_col,0), (est_col,0), white),
+        ('TEXTCOLOR',   (est_col,0), (est_col,0), BLUE),
+        # Label column — bold but no fill
         ('FONTNAME',    (0,1), (0,-1), BOLD_FONT),
         ('FONTSIZE',    (0,1), (0,-1), 7.5),
         ('ALIGN',       (0,1), (0,-1), 'LEFT'),
         # Data columns
         ('ALIGN',       (1,1), (-1,-1), 'RIGHT'),
         ('FONTSIZE',    (1,1), (-1,-1), 7.5),
-        # Grid
+        # Grid — light interior rules + thicker navy header underline
         ('GRID',        (0,0), (-1,-1), 0.3, BORDER),
-        ('LINEBELOW',   (0,0), (-1,0), 1.0, BLUE),
+        ('LINEBELOW',   (0,0), (-1,0), 1.4, NAVY),
         # Thicker left border on estimate column
         ('LINEBEFORE',  (est_col,0), (est_col,-1), 1.2, BLUE),
         # Padding
@@ -421,22 +420,22 @@ def _build_peer_table(
 
     t = Table(rows, colWidths=col_widths, repeatRows=1)
     ts = [
-        ('BACKGROUND',  (0,0), (-1,0), NAVY),
-        ('TEXTCOLOR',   (0,0), (-1,0), white),
+        # Header row — white background, navy text + thick navy underline
+        ('BACKGROUND',  (0,0), (-1,0), white),
+        ('TEXTCOLOR',   (0,0), (-1,0), NAVY),
         ('FONTNAME',    (0,0), (-1,0), BOLD_FONT),
         ('FONTSIZE',    (0,0), (-1,0), 7),
         ('ALIGN',       (0,0), (-1,0), 'CENTER'),
         ('VALIGN',      (0,0), (-1,-1),'MIDDLE'),
-        # Anchor company row (row 1) highlighted
-        ('BACKGROUND',  (0,1), (-1,1), LBLUE),
+        # Anchor company row (row 1) — bold + thick underline instead of fill
         ('FONTNAME',    (0,1), (-1,1), BOLD_FONT),
-        ('ROWBACKGROUND',(0,2), (-1,-1), [white, LLBLUE]),
+        ('BACKGROUND',  (0,2), (-1,-1), white),
         ('ALIGN',       (2,1), (-1,-1), 'RIGHT'),
         ('FONTSIZE',    (1,1), (-1,-1), 7),
         ('FONTSIZE',    (0,1), (0,-1), 7),
         ('GRID',        (0,0), (-1,-1), 0.3, BORDER),
-        ('LINEBELOW',   (0,0), (-1,0), 1.0, BLUE),
-        ('LINEBELOW',   (0,1), (-1,1), 0.8, BLUE),
+        ('LINEBELOW',   (0,0), (-1,0), 1.4, NAVY),
+        ('LINEBELOW',   (0,1), (-1,1), 0.8, NAVY),
         ('TOPPADDING',  (0,0), (-1,-1), 3),
         ('BOTTOMPADDING',(0,0),(-1,-1), 3),
         ('LEFTPADDING', (0,0), (-1,-1), 4),
@@ -472,18 +471,19 @@ def _build_checklist_table(checklist: list[dict], styles: dict) -> Table:
     col_widths = [CW * 0.44, CW * 0.18, CW * 0.22, CW * 0.16]
     t = Table(rows, colWidths=col_widths)
     ts = [
-        ('BACKGROUND',  (0,0), (-1,0), NAVY),
-        ('TEXTCOLOR',   (0,0), (-1,0), white),
+        # Ink-saving header: white bg, navy text, thick navy underline
+        ('BACKGROUND',  (0,0), (-1,0), white),
+        ('TEXTCOLOR',   (0,0), (-1,0), NAVY),
         ('FONTNAME',    (0,0), (-1,0), BOLD_FONT),
         ('FONTSIZE',    (0,0), (-1,0), 7.5),
         ('ALIGN',       (0,0), (-1,0), 'CENTER'),
         ('ALIGN',       (1,1), (-1,-1), 'CENTER'),
         ('ALIGN',       (0,1), (0,-1), 'LEFT'),
         ('VALIGN',      (0,0), (-1,-1),'MIDDLE'),
-        ('ROWBACKGROUND',(0,1), (-1,-1), [white, LLBLUE]),
+        ('BACKGROUND',  (0,1), (-1,-1), white),
         ('FONTSIZE',    (0,1), (-1,-1), 8),
         ('GRID',        (0,0), (-1,-1), 0.3, BORDER),
-        ('LINEBELOW',   (0,0), (-1,0), 1.0, BLUE),
+        ('LINEBELOW',   (0,0), (-1,0), 1.4, NAVY),
         ('TOPPADDING',  (0,0), (-1,-1), 4),
         ('BOTTOMPADDING',(0,0),(-1,-1), 4),
         ('LEFTPADDING', (0,0), (-1,-1), 5),
@@ -498,19 +498,23 @@ def _build_checklist_table(checklist: list[dict], styles: dict) -> Table:
 def _build_recommendation_box(
     recommendation: str, rationale: str, styles: dict
 ) -> Table:
-    """Coloured box showing BUY / HOLD / SELL + rationale."""
+    """Ink-saving BUY / HOLD / SELL box: white inside, thick coloured border."""
     rec = recommendation.strip().upper() if recommendation else "HOLD"
     colour = {"BUY": GREEN, "SELL": RED, "HOLD": AMBER}.get(rec, NAVY)
+    # Hex equivalent for Paragraph XML colour markup
+    colour_hex = {"BUY": "#1A7E3D", "SELL": "#C0392B", "HOLD": "#D68910"}\
+        .get(rec, "#003F54")
 
     rec_para = Paragraph(
-        f"RECOMMENDATION: <b>{rec}</b>",
+        f'<font color="{colour_hex}">RECOMMENDATION: <b>{rec}</b></font>',
         ParagraphStyle("rh", fontName=BOLD_FONT, fontSize=12,
-                       textColor=white, alignment=TA_CENTER, leading=15)
+                       alignment=TA_CENTER, leading=15)
     )
     rat_para = Paragraph(
         rationale or "",
         ParagraphStyle("rb", fontName=BASE_FONT, fontSize=8,
-                       textColor=white, alignment=TA_JUSTIFY, leading=12)
+                       textColor=HexColor("#333333"),
+                       alignment=TA_JUSTIFY, leading=12)
     )
 
     t = Table(
@@ -518,7 +522,9 @@ def _build_recommendation_box(
         colWidths=[CW],
     )
     t.setStyle(TableStyle([
-        ('BACKGROUND',   (0,0), (-1,-1), colour),
+        ('BACKGROUND',   (0,0), (-1,-1), white),
+        ('BOX',          (0,0), (-1,-1), 2.2, colour),
+        ('LINEBELOW',    (0,0), (-1,0),  1.0, colour),
         ('TOPPADDING',   (0,0), (-1,-1), 8),
         ('BOTTOMPADDING',(0,0), (-1,-1), 8),
         ('LEFTPADDING',  (0,0), (-1,-1), 12),
