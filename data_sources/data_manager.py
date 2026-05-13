@@ -142,6 +142,21 @@ class DataManager:
             cached = self._load_cache(ticker)
             if cached:
                 logger.info(f"[DataManager] Cache hit: {ticker} ({cached.completeness_pct()}% complete)")
+                # If the cached payload predates the Stooq fallback and so has
+                # no price, try Stooq inline before returning. Cheap (~1s) and
+                # rescues users who never force-refreshed after deploy.
+                if cached.current_price is None:
+                    try:
+                        from .stooq_adapter import fetch_stooq_close
+                        sp = fetch_stooq_close(ticker)
+                        if sp is not None:
+                            cached.current_price = sp
+                            if cached.market_cap is None and cached.shares_outstanding:
+                                cached.market_cap = sp * cached.shares_outstanding
+                            self._save_cache(ticker, cached)
+                            logger.info(f"[DataManager] Patched cached price via Stooq: {ticker} = {sp}")
+                    except Exception as e:
+                        logger.warning(f"[DataManager] Stooq patch failed for cached {ticker}: {e}")
                 return cached
 
         # ── Tier 1a: yfinance ─────────────────────────────────────────────────
