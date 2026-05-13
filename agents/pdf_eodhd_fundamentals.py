@@ -8,8 +8,8 @@ Pages:
   1  Company Profile & Valuation   — identity · description · market snapshot
                                      valuation multiples · profitability TTM
                                      dividends · ownership
-  2  Income Statement History      — 8-year P&L, margins, YoY growth, EPS
-  3  Balance Sheet & Cash Flow     — 8-year BS + CF side-by-side
+  2  Income Statement History      — 10-year P&L, margins, YoY growth, EPS
+  3  Balance Sheet & Cash Flow     — 10-year BS + CF side-by-side
   4  EPS Trend & Scorecard         — actual/estimate EPS table · forward estimates
                                      rule-based investment scorecard
 """
@@ -70,8 +70,8 @@ BOLD_FONT = "Helvetica-Bold"
 # ── EODHD verified-data checkmark ─────────────────────────────────────────────
 _EODHD_CHECK = ' <font name="ZapfDingbats" color="#2E7D32" size="6">4</font>'
 
-LABEL_W   = 150
-MAX_DCOLS = 8
+LABEL_W   = 130            # slightly narrower to give data columns more room
+MAX_DCOLS = 10
 DATA_W    = (CW - LABEL_W) / MAX_DCOLS
 
 
@@ -448,7 +448,7 @@ def _page2(company: CompanyData, styles: dict) -> list:
 
     # 8 most recent years in chronological order
     all_hist = company.sorted_years()           # descending
-    hist = list(reversed(all_hist[:8]))         # 8 newest → chronological
+    hist = list(reversed(all_hist[:10]))        # 10 newest → chronological
 
     ncols = len(hist)
     col_w = [LABEL_W] + [DATA_W] * ncols
@@ -573,7 +573,7 @@ def _page3(company: CompanyData, styles: dict) -> list:
     cur = _cur(company)
 
     all_hist = company.sorted_years()
-    hist = list(reversed(all_hist[:8]))
+    hist = list(reversed(all_hist[:10]))
     ncols = len(hist)
     col_w = [LABEL_W] + [DATA_W] * ncols
 
@@ -702,7 +702,7 @@ def _page4(company: CompanyData, styles: dict) -> list:
     cur = _cur(company)
 
     all_hist = company.sorted_years()
-    hist = list(reversed(all_hist[:8]))
+    hist = list(reversed(all_hist[:10]))
 
     # ── EPS History table ─────────────────────────────────────────────────────
     el.append(_sec("EPS Diluted — Historical vs Estimates", styles))
