@@ -21,9 +21,10 @@ from reportlab.lib.colors import HexColor, white, black
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle,
-    Spacer, HRFlowable, PageBreak, KeepTogether,
+    Spacer, HRFlowable, PageBreak, KeepTogether, Image,
 )
 from reportlab.platypus.flowables import Flowable
+from reportlab.lib.utils import ImageReader
 
 from data_sources.base import CompanyData
 
@@ -592,6 +593,28 @@ class OverviewPDFGenerator:
 
     def _page1(self, company: CompanyData, analysis: dict, styles: dict) -> list:
         el = []
+
+        # ── 5-Year price chart (top of page 1) ────────────────────────────────
+        # Generated as PNG via matplotlib using yfinance (primary) or Stooq
+        # daily CSV (cloud fallback). Silently skipped if both sources fail
+        # so the rest of the report still renders.
+        try:
+            from agents.price_chart import generate_price_chart_png
+            import io
+            png = generate_price_chart_png(
+                ticker=company.ticker,
+                company_name=company.name,
+                currency=company.currency_price or company.currency,
+                width_in=7.2, height_in=2.2,
+            )
+            if png:
+                img = Image(io.BytesIO(png),
+                            width=170*mm, height=52*mm,
+                            kind="proportional")
+                el.append(img)
+                el.append(Spacer(1, 4))
+        except Exception as ex:
+            logger.warning(f"[PDF] Price chart failed: {ex}")
 
         # Financial table
         el.append(section_title("Financial Summary", styles))
