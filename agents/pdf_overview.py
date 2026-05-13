@@ -138,7 +138,8 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
 
     # Right side: price | mkt cap | date
     cur = company.currency_price or company.currency or ""
-    price_str  = f"Price: {company.current_price} {cur}" if company.current_price else ""
+    price_str  = (f"Price: {company.current_price:,.2f} {cur}"
+                  if company.current_price else "Price n/a")
     mcap_str   = (f"MCap: {_fmt_b(company.market_cap)} {company.currency or ''}"
                   if company.market_cap else "")
     date_str   = f"Report: {report_date}"
@@ -148,6 +149,7 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
     right_x = W - MR
     canvas.drawRightString(right_x, H - 10*mm, price_str)
     canvas.setFont(BASE_FONT, 8)
+    # Keep market cap in white for high contrast on the navy band.
     canvas.drawRightString(right_x, H - 15.5*mm, mcap_str)
     canvas.setFont(BASE_FONT, 7.5)
     canvas.setFillColor(LBLUE)

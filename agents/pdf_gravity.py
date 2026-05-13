@@ -141,7 +141,8 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
     canvas.setFillColor(white)
     canvas.drawRightString(W - MR, H - 10*mm, price_str)
     canvas.setFont(BASE_FONT, 7.5)
-    canvas.setFillColor(LBLUE)
+    # Use white (not LBLUE) so the market cap is readable on the navy band.
+    canvas.setFillColor(white)
     canvas.drawRightString(W - MR, H - 15.5*mm, cap_str)
     canvas.drawRightString(W - MR, H - 20.5*mm, company.ticker)
 
