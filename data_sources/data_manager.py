@@ -308,7 +308,10 @@ class DataManager:
                     logger.warning(f"[DataManager] Alpha Vantage failed: {result.error}")
 
         # ── Tier 4: FMP (paid — only if critical fields still missing) ─────────
-        if self._fmp and ENABLE_FMP:
+        # FMP's free / standard plans only cover US-listed equities. Calling
+        # FMP for European or Asian tickers produces noisy 404s and never
+        # returns useful data, so we restrict the tier to US tickers.
+        if self._fmp and ENABLE_FMP and is_us_ticker:
             missing = self._find_missing_critical(company)
             if missing:
                 logger.info(f"[DataManager] Running FMP for {ticker} — "
@@ -320,6 +323,8 @@ class DataManager:
                     logger.info(f"[DataManager] After FMP: {company.completeness_pct()}% complete")
                 else:
                     logger.warning(f"[DataManager] FMP failed: {result.error}")
+        elif self._fmp and ENABLE_FMP and not is_us_ticker:
+            logger.debug(f"[DataManager] Skipping FMP for non-US ticker {ticker}")
 
         # ── Stooq fallback for current_price ──────────────────────────────────
         # When yfinance fails (Streamlit Cloud → Yahoo IP block) and the EODHD

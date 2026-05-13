@@ -60,7 +60,11 @@ ENABLE_YFINANCE       = True   # Tier 1 — always on
 ENABLE_EDGAR          = True   # Tier 1 — US stocks only
 ENABLE_FRED           = True   # Tier 1 — macroeconomic data
 ENABLE_ALPHA_VANTAGE  = bool(ALPHA_VANTAGE_API_KEY)  # Tier 2 — needs free key
-ENABLE_FMP            = bool(FMP_API_KEY)             # Tier 4 — needs paid key
+ENABLE_FMP            = bool(FMP_API_KEY) and \
+                        os.getenv("ENABLE_FMP", "true").lower() != "false"
+# Tier 4 — needs paid key. Set ENABLE_FMP=false in .env / Streamlit secrets
+# to disable the FMP fallback entirely. Even when enabled, FMP only runs
+# for US-listed tickers (its free plan doesn't cover EU/Asia exchanges).
 ENABLE_EODHD          = bool(EODHD_API_KEY)           # Tier 1b — non-US, needs paid key
 
 # Years of historical annual data to target

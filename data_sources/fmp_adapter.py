@@ -89,6 +89,16 @@ class FMPAdapter:
                 logger.error(f"[fmp] API error: {data['Error Message']}")
                 return None
             return data
+        except requests.HTTPError as e:
+            # 404 = ticker not covered by FMP (typically non-US). This is an
+            # expected outcome on the free plan and shouldn't be flagged as
+            # an error in the user's logs. Other HTTP errors stay loud.
+            status = getattr(e.response, "status_code", None)
+            if status == 404:
+                logger.debug(f"[fmp] {endpoint} not covered by FMP (404)")
+            else:
+                logger.error(f"[fmp] Request failed for {endpoint}: {e}")
+            return None
         except Exception as e:
             logger.error(f"[fmp] Request failed for {endpoint}: {e}")
             return None
