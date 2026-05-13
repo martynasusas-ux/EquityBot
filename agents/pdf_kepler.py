@@ -515,7 +515,7 @@ def _build_summary_page(
     mktcap_str = "n/a"
     if company.market_cap is not None:
         mc = company.market_cap
-        mktcap_str = f"{mc/1000:.1f}B {cur}" if mc >= 1000 else f"{mc:.0f}M {cur}"
+        mktcap_str = f"{mc/1000:.1f}B {cur}" if mc >= 1000 else f"{mc:,.1f}M {cur}"
 
     mkt_data = [
         [

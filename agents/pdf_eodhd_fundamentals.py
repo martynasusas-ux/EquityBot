@@ -81,8 +81,8 @@ def _n(v: Optional[float], dec: int = 1) -> str:
     if v is None: return "—"
     return f"{v:,.{dec}f}"
 
-def _m(v: Optional[float], dec: int = 0) -> str:
-    """Value already in millions."""
+def _m(v: Optional[float], dec: int = 1) -> str:
+    """Value already in millions — always show at least 1 decimal."""
     if v is None: return "—"
     return f"{v:,.{dec}f}"
 

@@ -423,7 +423,7 @@ def _section_financial_table(company: "CompanyData") -> str:
         if fmt == "M":
             if abs(val) >= 1000:
                 return f"{val/1000:,.1f}B"
-            return f"{val:,.0f}M"
+            return f"{val:,.1f}M"
         elif fmt == "%":
             return f"{val*100:.1f}%"
         elif fmt == "ps":
@@ -708,7 +708,7 @@ def _fmt_b(v) -> str:
         return "<span style='color:#999'>n/a</span>"
     if abs(v) >= 1000:
         return f"{v/1000:,.1f}B"
-    return f"{v:,.0f}M"
+    return f"{v:,.1f}M"
 
 
 def _fmt_x(v) -> str:

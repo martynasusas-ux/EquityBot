@@ -457,7 +457,7 @@ def _build_profile_page(company: CompanyData, styles: dict) -> list:
 
     mc = company.market_cap
     mc_str = (f"{mc/1000:.2f}bn {cur}" if mc and mc >= 1000
-              else (f"{mc:.0f}m {cur}" if mc else "—"))
+              else (f"{mc:,.1f}m {cur}" if mc else "—"))
 
     # Distance from 52w levels
     def _dist_52(price, level, label):
@@ -481,7 +481,7 @@ def _build_profile_page(company: CompanyData, styles: dict) -> list:
         ("Enterprise value",
          (f"{company.enterprise_value/1000:.2f}bn {cur}"
           if company.enterprise_value and company.enterprise_value >= 1000
-          else (f"{company.enterprise_value:.0f}m {cur}"
+          else (f"{company.enterprise_value:,.1f}m {cur}"
                 if company.enterprise_value else "—"))),
         ("Shares outstanding",   f"{company.shares_outstanding:.1f}m" if company.shares_outstanding else "—"),
         ("Float shares",         f"{company.shares_float:.1f}m" if company.shares_float else "—"),
