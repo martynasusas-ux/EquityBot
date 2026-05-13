@@ -287,6 +287,18 @@ class EODHDAdapter:
         else:
             company.market_cap = self._to_m(highlights.get("MarketCapitalization"))
 
+        # Current price: EODHD fundamentals endpoint doesn't return a live quote,
+        # but we can derive it from MarketCap / SharesOutstanding when both are
+        # available. This is critical on Streamlit Cloud where yfinance often
+        # gets blocked by Yahoo and EODHD is the only working source.
+        shares_raw_full = self._parse_float(
+            (raw.get("SharesStats") or {}).get("SharesOutstanding")
+        )
+        if (company.market_cap is not None and shares_raw_full
+                and shares_raw_full > 0):
+            # market_cap is in millions, shares_raw_full is in full units
+            company.current_price = (company.market_cap * 1_000_000) / shares_raw_full
+
         company.pe_ratio      = self._parse_float(highlights.get("PERatio"))
         company.roe           = self._parse_float(highlights.get("ReturnOnEquityTTM"))
         company.roa           = self._parse_float(highlights.get("ReturnOnAssetsTTM"))

@@ -189,6 +189,10 @@ class DataManager:
                         "description", "website", "employees",
                         "ipo_date", "fiscal_year_end", "address", "phone",
                         "officers",
+                        # Current market — must merge so they survive when
+                        # yfinance fails (common on Streamlit Cloud due to
+                        # Yahoo IP blocking)
+                        "current_price", "market_cap", "shares_outstanding",
                         # Technicals / price levels
                         "beta", "week_52_high", "week_52_low", "ma_50", "ma_200",
                         # Ownership structure
