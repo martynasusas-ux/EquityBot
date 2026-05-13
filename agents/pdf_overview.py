@@ -177,16 +177,31 @@ def _draw_header(canvas, doc, company: CompanyData, report_date: str):
 
 def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     """
-    Build the 5-column annual financial table.
-    Columns: label | yr-3 | yr-2 | yr-1 | latest | estimate
+    Build the annual financial table.
+    Columns: label | (up to 10 most recent fiscal years) | estimate
     """
     cur = company.currency or ""
     all_years = company.sorted_years()
 
-    # Pick up to 4 historical years + mark the most recent estimate column
-    hist_years = all_years[:4]   # most recent 4 years
+    # Pick up to 10 historical years + mark the most recent estimate column
+    hist_years = all_years[:10]   # most recent 10 years (descending)
     show_years = list(reversed(hist_years))  # chronological order
     est_year   = (show_years[-1] + 1) if show_years else datetime.utcnow().year
+
+    # When many columns (≥9 data cols incl. estimate) shrink Paragraph
+    # styles so numeric cells don't overflow narrow ~42pt columns.
+    _compact = (len(show_years) + 1) >= 9
+    if _compact:
+        th_style = ParagraphStyle("th_c", parent=styles["table_header"],
+                                  fontSize=6.5, leading=8)
+        tl_style = ParagraphStyle("tl_c", parent=styles["table_label"],
+                                  fontSize=6.5, leading=8)
+        tc_style = ParagraphStyle("tc_c", parent=styles["table_cell"],
+                                  fontSize=6.5, leading=8)
+    else:
+        th_style = styles["table_header"]
+        tl_style = styles["table_label"]
+        tc_style = styles["table_cell"]
 
     # Column headers — append ✓ (ZapfDingbats) when the year is EODHD-sourced
     def _yr_hdr(y: int) -> str:
@@ -195,8 +210,8 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
         return str(y) + check
 
     year_headers = [_yr_hdr(y) for y in show_years] + [f"{est_year}E"]
-    col_headers  = [Paragraph("", styles["table_header"])] + [
-        Paragraph(y, styles["table_header"]) for y in year_headers
+    col_headers  = [Paragraph("", th_style)] + [
+        Paragraph(y, th_style) for y in year_headers
     ]
 
     def af(yr):
@@ -205,7 +220,7 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     def cell(v, fmt="M"):
         """Format a value for the table cell."""
         if v is None:
-            return Paragraph("n/a", styles["table_cell"])
+            return Paragraph("n/a", tc_style)
         if fmt == "M":   # millions → show as B or M
             s = f"{v/1000:.1f}B" if abs(v) >= 1000 else f"{v:,.1f}M"
         elif fmt == "%":
@@ -216,10 +231,10 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
             s = f"{v:.2f}"
         else:
             s = str(v)
-        return Paragraph(s, styles["table_cell"])
+        return Paragraph(s, tc_style)
 
     def lbl(text):
-        return Paragraph(text, styles["table_label"])
+        return Paragraph(text, tl_style)
 
     # ── Forward estimates helper ──────────────────────────────────────────────
     fe = company.forward_estimates   # ForwardEstimates | None
@@ -227,7 +242,7 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     def est_cell_val(v, fmt="M"):
         """Render an estimate value in a distinct italic style."""
         if v is None:
-            return Paragraph("—", styles["table_cell"])
+            return Paragraph("—", tc_style)
         if fmt == "M":
             s = f"{v/1000:.1f}B" if abs(v) >= 1000 else f"{v:,.1f}M"
         elif fmt == "%":
@@ -239,17 +254,17 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
         else:
             s = str(v)
         # Italic + slightly lighter to signal "estimate"
-        return Paragraph(f"<i>{s}</i>", styles["table_cell"])
+        return Paragraph(f"<i>{s}</i>", tc_style)
 
     def est_cell_none():
-        return Paragraph("—", styles["table_cell"])
+        return Paragraph("—", tc_style)
 
     # Update est_year to use forward_estimates.year if available
     if fe is not None:
         est_year = fe.year
         year_headers = [_yr_hdr(y) for y in show_years] + [f"{est_year}E"]
-        col_headers = [Paragraph("", styles["table_header"])] + [
-            Paragraph(y, styles["table_header"]) for y in year_headers
+        col_headers = [Paragraph("", th_style)] + [
+            Paragraph(y, th_style) for y in year_headers
         ]
 
     # Build rows: (label, [col values])
@@ -310,9 +325,11 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     # Insert header as first row
     all_rows = [col_headers] + rows_data
 
-    # Column widths: label=130, data cols=65 each (5 cols)
+    # Column widths: label fixed, data cols evenly split among hist + est.
+    # With 10 historical + 1 estimate = 11 data cols on A4 (~565 pt content
+    # width), narrow label column to leave room for narrow numeric cells.
     n_data_cols = len(show_years) + 1  # +1 for estimate
-    label_w = 105
+    label_w = 88 if n_data_cols >= 9 else 105
     data_w  = (CW - label_w) / n_data_cols
     col_widths = [label_w] + [data_w] * n_data_cols
 
@@ -322,12 +339,18 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
     # estimate column is col n_data_cols)
     est_col = n_data_cols
 
+    # Adaptive sizing: with 10+ historical columns numeric cells must shrink
+    # so values like "12,345.6" don't overflow ~42pt-wide columns.
+    body_fs   = 6.5 if n_data_cols >= 9 else 7.5
+    hdr_fs    = 7.0 if n_data_cols >= 9 else 7.5
+    cell_pad  = 2   if n_data_cols >= 9 else 5
+
     ts = [
         # Header row — white background, navy text + thick navy underline
         ('BACKGROUND',  (0,0), (-1,0), white),
         ('TEXTCOLOR',   (0,0), (-1,0), NAVY),
         ('FONTNAME',    (0,0), (-1,0), BOLD_FONT),
-        ('FONTSIZE',    (0,0), (-1,0), 7.5),
+        ('FONTSIZE',    (0,0), (-1,0), hdr_fs),
         ('ALIGN',       (0,0), (-1,0), 'CENTER'),
         ('VALIGN',      (0,0), (-1,-1),'MIDDLE'),
         # Body — plain white (no alternating fill, saves ink)
@@ -337,11 +360,11 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
         ('TEXTCOLOR',   (est_col,0), (est_col,0), BLUE),
         # Label column — bold but no fill
         ('FONTNAME',    (0,1), (0,-1), BOLD_FONT),
-        ('FONTSIZE',    (0,1), (0,-1), 7.5),
+        ('FONTSIZE',    (0,1), (0,-1), body_fs),
         ('ALIGN',       (0,1), (0,-1), 'LEFT'),
         # Data columns
         ('ALIGN',       (1,1), (-1,-1), 'RIGHT'),
-        ('FONTSIZE',    (1,1), (-1,-1), 7.5),
+        ('FONTSIZE',    (1,1), (-1,-1), body_fs),
         # Grid — light interior rules + thicker navy header underline
         ('GRID',        (0,0), (-1,-1), 0.3, BORDER),
         ('LINEBELOW',   (0,0), (-1,0), 1.4, NAVY),
@@ -350,8 +373,8 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
         # Padding
         ('TOPPADDING',  (0,0), (-1,-1), 3),
         ('BOTTOMPADDING',(0,0),(-1,-1), 3),
-        ('LEFTPADDING', (0,0), (-1,-1), 5),
-        ('RIGHTPADDING',(0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), cell_pad),
+        ('RIGHTPADDING',(0,0), (-1,-1), cell_pad),
         # Separator after Net Fin. Debt row (row index 4)
         ('LINEBELOW',   (0,4), (-1,4), 0.6, BLUE),
         # Separator after EPS row (row index 7)
