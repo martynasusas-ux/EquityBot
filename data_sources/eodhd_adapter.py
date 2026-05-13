@@ -532,6 +532,9 @@ class EODHDAdapter:
                 continue
 
             af = company.annual_financials.get(yr, AnnualFinancials(year=yr))
+            # Mark this row as EODHD-sourced so the green ✓ shows in PDFs
+            # even when this is a brand-new year (wholesale merge path).
+            af.source = "eodhd"
 
             # ── Income Statement ──────────────────────────────────────────────
             af.revenue      = self._to_m(inc.get("totalRevenue"))
