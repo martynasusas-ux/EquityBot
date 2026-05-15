@@ -668,8 +668,8 @@ st.markdown(
          icon when the `help=` arg is set. Both of those add width that
          pushes the glyph off-centre. We hide the tooltip-icon entirely
          (the `help=` tooltip still works on hover via the button's
-         own title attr) and pin the inner markdown wrapper to fill +
-         centre. */
+         own title attr) and reset every descendant of the button so
+         the glyph sits at the geometric centre. */
       div[data-testid="stHorizontalBlock"]
         > div[data-testid="column"]:nth-last-child(-n+2)
         > div[data-testid="stVerticalBlock"]
@@ -680,26 +680,31 @@ st.markdown(
         div[data-testid="stButton"] > button [data-testid="stTooltipHoverTarget"] {
         display: none !important;
       }
+      /* Wildcard reset on every descendant — covers st-emotion-cache-*
+         wrappers, p, span, divs that Streamlit adds around the glyph. */
       div[data-testid="stHorizontalBlock"]
         > div[data-testid="column"]:nth-last-child(-n+2)
         > div[data-testid="stVerticalBlock"]
-        div[data-testid="stButton"] > button > div,
-      div[data-testid="stHorizontalBlock"]
-        > div[data-testid="column"]:nth-last-child(-n+2)
-        > div[data-testid="stVerticalBlock"]
-        div[data-testid="stButton"] > button [data-testid="stMarkdownContainer"],
-      div[data-testid="stHorizontalBlock"]
-        > div[data-testid="column"]:nth-last-child(-n+2)
-        > div[data-testid="stVerticalBlock"]
-        div[data-testid="stButton"] > button [data-testid="stMarkdownContainer"] > p {
+        div[data-testid="stButton"] > button * {
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1 !important;
+        text-align: center !important;
         width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+      }
+      /* The <p> inside the button gets block layout — make sure it
+         doesn't add the browser default 1em top/bottom margins. */
+      div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]:nth-last-child(-n+2)
+        > div[data-testid="stVerticalBlock"]
+        div[data-testid="stButton"] > button p {
         margin: 0 !important;
         padding: 0 !important;
         text-align: center !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        line-height: 1 !important;
+        width: 100% !important;
+        display: block !important;
       }
     </style>
     """,
