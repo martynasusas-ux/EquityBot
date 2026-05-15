@@ -500,19 +500,52 @@ with top_r:
         _fetch_next_earnings.clear()
         st.rerun()
 
+# Tight CSS for the rows — pulls Streamlit's default column padding tighter
+# so an entire ticker fits on a single visual line.
+st.markdown(
+    """
+    <style>
+      .pf-cell {
+        font-size: 13px;
+        line-height: 1.2;
+        padding: 4px 0 4px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pf-name    { font-weight: 600; color: #1B3F6E; }
+      .pf-tk      { color: #888; font-size: 11px; }
+      .pf-val     { font-size: 13px; color: #222; }
+      .pf-hdr     { color: #888; font-size: 11px; padding: 2px 0; }
+      .pf-earn    { color: #1B3F6E; font-size: 11px; }
+      .pf-earn-na { color: #888; font-size: 11px; font-style: italic; }
+      /* Tighten Streamlit's column gutter */
+      div[data-testid="column"] { padding-left: 4px !important;
+                                  padding-right: 4px !important; }
+      /* Tighten button height in row */
+      .pf-row button { padding: 0px 6px !important; min-height: 28px !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Column widths — must match between header and rows.
+_COL_W = [2.4, 0.9, 1.5, 1.4, 1.3, 0.7, 0.7, 0.8, 1.0, 0.35, 0.35]
+
 # Header row labels (only when there's at least one card)
 if st.session_state.portfolio_tickers:
-    h_cols = st.columns([3, 1.4, 1.4, 1.0, 1.0, 1.2, 1.2, 0.55, 0.55])
-    h_cols[0].markdown("<small style='color:#888;'>Name</small>", unsafe_allow_html=True)
-    h_cols[1].markdown("<small style='color:#888;'>Price</small>", unsafe_allow_html=True)
-    h_cols[2].markdown("<small style='color:#888;'>Mkt Cap</small>", unsafe_allow_html=True)
-    h_cols[3].markdown("<small style='color:#888;'>P/E</small>", unsafe_allow_html=True)
-    h_cols[4].markdown("<small style='color:#888;'>ROE</small>", unsafe_allow_html=True)
-    h_cols[5].markdown("<small style='color:#888;'>EBIT M.</small>", unsafe_allow_html=True)
-    h_cols[6].markdown("<small style='color:#888;'>YTD</small>", unsafe_allow_html=True)
-    h_cols[7].markdown("<small style='color:#888;'>&nbsp;</small>", unsafe_allow_html=True)
-    h_cols[8].markdown("<small style='color:#888;'>&nbsp;</small>", unsafe_allow_html=True)
-    st.markdown("<hr style='margin:0; border-color:#E0E5EC;'>", unsafe_allow_html=True)
+    h_cols = st.columns(_COL_W)
+    labels = ["Name", "Ticker", "Earnings", "Price", "Mkt Cap",
+              "P/E", "ROE", "EBIT M.", "YTD", "", ""]
+    align_right = {3, 4, 5, 6, 7, 8}   # numeric columns right-aligned
+    for i, lab in enumerate(labels):
+        align = "right" if i in align_right else "left"
+        h_cols[i].markdown(
+            f"<div class='pf-hdr' style='text-align:{align};'>{lab}</div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("<hr style='margin:0 0 4px 0; border-color:#E0E5EC;'>",
+                unsafe_allow_html=True)
 
 # ── Portfolio rendering ───────────────────────────────────────────────────────
 if not st.session_state.portfolio_tickers:
@@ -529,65 +562,72 @@ else:
         ytd_text, ytd_color = _fmt_signed_pct(snap.get("ytd_pct"))
         next_earnings = _fetch_next_earnings(ticker)
 
-        # ── Compact row ──────────────────────────────────────────────────────
-        cols = st.columns([3, 1.4, 1.4, 1.0, 1.0, 1.2, 1.2, 0.55, 0.55])
+        # ── Single-line compact row ──────────────────────────────────────────
+        cols = st.columns(_COL_W)
 
-        # Name + ticker + next earnings (truncated)
-        name_disp = snap["name"][:38]
-        if next_earnings:
-            earnings_html = (
-                f"<span style='color:#1B3F6E;'>"
-                f"📅 Earnings: <b>{next_earnings}</b></span>"
-            )
-        else:
-            earnings_html = (
-                "<span style='color:#888;font-style:italic;'>"
-                "📅 Earnings: nepaskelbta dar</span>"
-            )
+        # 0. Name (truncated hard so it stays on one line)
+        name_disp = (snap["name"] or ticker)[:28]
         cols[0].markdown(
-            f"<div style='line-height:1.25;'>"
-            f"<b>{name_disp}</b><br>"
-            f"<small style='color:#888;'>{ticker}</small>"
-            f"&nbsp;·&nbsp;<small>{earnings_html}</small>"
-            f"</div>",
+            f"<div class='pf-cell pf-name' title='{snap['name']}'>"
+            f"{name_disp}</div>",
             unsafe_allow_html=True,
         )
+
+        # 1. Ticker symbol (small grey)
         cols[1].markdown(
-            f"<div style='padding-top:6px;'>{_fmt_price(snap['price'], snap['currency'])}</div>",
+            f"<div class='pf-cell pf-tk'>{ticker}</div>",
             unsafe_allow_html=True,
         )
+
+        # 2. Earnings date (or 'nepaskelbta dar')
+        if next_earnings:
+            earn = f"📅 {next_earnings}"
+            earn_cls = "pf-earn"
+        else:
+            earn = "📅 nepaskelbta dar"
+            earn_cls = "pf-earn-na"
         cols[2].markdown(
-            f"<div style='padding-top:6px;'>{_fmt_money(snap['market_cap'])}</div>",
+            f"<div class='pf-cell {earn_cls}'>{earn}</div>",
             unsafe_allow_html=True,
         )
-        cols[3].markdown(
-            f"<div style='padding-top:6px;'>{_fmt_ratio(snap['pe'])}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[4].markdown(
-            f"<div style='padding-top:6px;'>{_fmt_pct(snap['roe'])}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[5].markdown(
-            f"<div style='padding-top:6px;'>{_fmt_pct(snap['ebit_margin'])}</div>",
-            unsafe_allow_html=True,
-        )
-        cols[6].markdown(
-            f"<div style='padding-top:6px;color:{ytd_color};font-weight:600;'>{ytd_text}</div>",
-            unsafe_allow_html=True,
-        )
-        # Expand / collapse toggle
-        with cols[7]:
+
+        # 3-7. Numeric metrics, right-aligned for easier scanning
+        def _num_cell(text: str, color: str = "#222",
+                      bold: bool = False) -> str:
+            wt = "font-weight:600;" if bold else ""
+            return (f"<div class='pf-cell pf-val' "
+                    f"style='text-align:right;color:{color};{wt}'>"
+                    f"{text}</div>")
+
+        cols[3].markdown(_num_cell(_fmt_price(snap['price'], snap['currency'])),
+                          unsafe_allow_html=True)
+        cols[4].markdown(_num_cell(_fmt_money(snap['market_cap'])),
+                          unsafe_allow_html=True)
+        cols[5].markdown(_num_cell(_fmt_ratio(snap['pe'])),
+                          unsafe_allow_html=True)
+        cols[6].markdown(_num_cell(_fmt_pct(snap['roe'])),
+                          unsafe_allow_html=True)
+        cols[7].markdown(_num_cell(_fmt_pct(snap['ebit_margin'])),
+                          unsafe_allow_html=True)
+        # 8. YTD (coloured + bold)
+        cols[8].markdown(_num_cell(ytd_text, color=ytd_color, bold=True),
+                          unsafe_allow_html=True)
+
+        # 9. Expand / collapse toggle
+        with cols[9]:
             arrow = "▴" if is_expanded else "▾"
-            if st.button(arrow, key=f"toggle_{ticker}", help="Expand / collapse"):
+            if st.button(arrow, key=f"toggle_{ticker}", help="Expand / collapse",
+                         use_container_width=True):
                 if is_expanded:
                     st.session_state.portfolio_expanded.discard(ticker)
                 else:
                     st.session_state.portfolio_expanded.add(ticker)
                 st.rerun()
-        # Remove
-        with cols[8]:
-            if st.button("✕", key=f"del_{ticker}", help="Remove from portfolio"):
+
+        # 10. Remove
+        with cols[10]:
+            if st.button("✕", key=f"del_{ticker}", help="Remove from portfolio",
+                         use_container_width=True):
                 st.session_state.portfolio_tickers.remove(ticker)
                 st.session_state.portfolio_expanded.discard(ticker)
                 _save_portfolio(st.session_state.portfolio_tickers)
@@ -780,9 +820,12 @@ else:
                                 st.markdown("<div style='margin-bottom:12px;'></div>",
                                             unsafe_allow_html=True)
 
-        # Inter-card separator
-        st.markdown("<hr style='margin:6px 0; border-color:#E0E5EC;'>",
-                    unsafe_allow_html=True)
+        # Thin inter-card separator
+        st.markdown(
+            "<hr style='margin:2px 0; border:none; "
+            "border-top:1px solid #EDF1F5;'>",
+            unsafe_allow_html=True,
+        )
 
 st.markdown("&nbsp;", unsafe_allow_html=True)
 st.caption(
