@@ -120,22 +120,33 @@ def _show_token_usage(usage: dict) -> None:
     st.caption("🪙 " + "  ·  ".join(parts))
 
 
-def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
+def _cost_block(
+    usage_claude: dict,
+    usage_openai: dict | None = None,
+    usage_prompt: dict | None = None,
+) -> None:
     """
     Render a styled cost summary card after report generation.
     Called once and stored in report_result for persistent display.
+
+    Args:
+        usage_claude  — Claude usage from the report itself (or {} if free)
+        usage_openai  — GPT-4o usage (adversarial only, optional)
+        usage_prompt  — Claude/OpenAI usage from the NL intent parser
+                        that interpreted the user's prompt (optional)
     """
     c_cost = _claude_cost(usage_claude)
     o_cost = _openai_cost(usage_openai) if usage_openai else 0.0
-    total  = c_cost + o_cost
+    p_cost = _claude_cost(usage_prompt) if usage_prompt else 0.0
+    total  = c_cost + o_cost + p_cost
 
     c_in  = usage_claude.get("input_tokens", 0) or 0
     c_cw  = usage_claude.get("cache_creation_input_tokens", 0) or 0
     c_cr  = usage_claude.get("cache_read_input_tokens", 0) or 0
     c_out = usage_claude.get("output_tokens", 0) or 0
 
-    # ── Free report (no LLM) ─────────────────────────────────────────────────
-    if not usage_claude and not usage_openai:
+    # ── Free report (no LLM at all, not even prompt) ─────────────────────────
+    if not usage_claude and not usage_openai and not usage_prompt:
         st.markdown(
             "<div style='background:#F0FFF4;border:1px solid #BBE0C8;border-radius:6px;"
             "padding:8px 14px;margin:6px 0;font-size:12px;color:#1A7E3D;line-height:1.8;'>"
@@ -148,18 +159,35 @@ def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
 
     lines = []
 
-    # Claude row
-    c_parts = [f"in {c_in+c_cw+c_cr:,}"]
-    if c_cr:
-        c_parts.append(f"⚡ {c_cr:,} cached")
-    if c_cw:
-        c_parts.append(f"✍ {c_cw:,} written")
-    c_parts.append(f"out {c_out:,}")
-    lines.append(
-        f"<b>Claude Sonnet 4.6</b>  ·  "
-        + "  ·  ".join(c_parts)
-        + f"  →  <b>${c_cost:.4f}</b>"
-    )
+    # Prompt parsing row (only when an NL prompt was interpreted)
+    if usage_prompt:
+        p_in  = usage_prompt.get("input_tokens", 0) or 0
+        p_cw  = usage_prompt.get("cache_creation_input_tokens", 0) or 0
+        p_cr  = usage_prompt.get("cache_read_input_tokens", 0) or 0
+        p_out = usage_prompt.get("output_tokens", 0) or 0
+        p_parts = [f"in {p_in+p_cw+p_cr:,}"]
+        if p_cr:
+            p_parts.append(f"⚡ {p_cr:,} cached")
+        p_parts.append(f"out {p_out:,}")
+        lines.append(
+            f"<b>🔮 Prompt interpretation</b>  ·  "
+            + "  ·  ".join(p_parts)
+            + f"  →  <b>${p_cost:.4f}</b>"
+        )
+
+    # Report — Claude row
+    if usage_claude:
+        c_parts = [f"in {c_in+c_cw+c_cr:,}"]
+        if c_cr:
+            c_parts.append(f"⚡ {c_cr:,} cached")
+        if c_cw:
+            c_parts.append(f"✍ {c_cw:,} written")
+        c_parts.append(f"out {c_out:,}")
+        lines.append(
+            f"<b>📊 Report (Claude Sonnet 4.6)</b>  ·  "
+            + "  ·  ".join(c_parts)
+            + f"  →  <b>${c_cost:.4f}</b>"
+        )
 
     # GPT-4o row (adversarial only)
     if usage_openai:
@@ -171,13 +199,19 @@ def _cost_block(usage_claude: dict, usage_openai: dict | None = None) -> None:
             o_parts.append(f"⚡ {o_cr:,} cached")
         o_parts.append(f"out {o_out:,}")
         lines.append(
-            f"<b>GPT-4o</b>  ·  "
+            f"<b>⚔ Report (GPT-4o)</b>  ·  "
             + "  ·  ".join(o_parts)
             + f"  →  <b>${o_cost:.4f}</b>"
         )
 
     rows_html = "<br>".join(lines)
-    total_html = f"<b>Total: ${total:.4f}</b>" if usage_openai else ""
+    # Show grand total when there are 2+ rows, so user can see prompt + report
+    # combined or claude + adversarial combined.
+    show_total = (len(lines) >= 2)
+    total_html = (
+        f"<b>Total: ${total:.4f}</b>"
+        if show_total else ""
+    )
 
     st.markdown(
         f"<div style='background:#F8FAFC;border:1px solid #D0DFF0;border-radius:6px;"
@@ -693,11 +727,20 @@ with col_left:
             with st.spinner("🔮 Interpreting your query with the LLM…"):
                 try:
                     from models.nl_intent import parse_intent as _parse_nl
-                    intent = _parse_nl(nl_q)
+                    intent, _intent_usage = _parse_nl(nl_q)
                 except Exception as _e:
                     intent = {}
+                    _intent_usage = {}
                     st.error(f"Intent parsing failed: {_e}")
             st.session_state.rg_intent = intent
+            # Persist the prompt-parser's LLM usage so the cost block
+            # under the eventual report can show how much the prompt
+            # interpretation cost. Stays in session until a new prompt
+            # is interpreted.
+            st.session_state.rg_prompt_usage = _intent_usage
+            # Show inline cost line for the prompt itself
+            if _intent_usage:
+                _show_token_usage(_intent_usage)
 
             action = (intent or {}).get("action")
             if action == "screen" and intent.get("universe"):
@@ -1831,8 +1874,20 @@ if st.session_state.report_result:
                        f"Sources: {', '.join(company.data_sources)}")
 
     # ── LLM cost summary (always shown for equity reports) ───────────────────
-    if "usage_claude" in res:
-        _cost_block(res.get("usage_claude") or {}, res.get("usage_openai"))
+    # Prompt-interpretation usage lives in session_state (set by the NL
+    # parser dispatch) — it persists across the rerun that follows
+    # report generation, so we read it here and feed it into _cost_block.
+    _prompt_u = (
+        res.get("usage_prompt")
+        or st.session_state.get("rg_prompt_usage")
+        or None
+    )
+    if "usage_claude" in res or _prompt_u:
+        _cost_block(
+            res.get("usage_claude") or {},
+            res.get("usage_openai"),
+            _prompt_u,
+        )
 
     st.divider()
 

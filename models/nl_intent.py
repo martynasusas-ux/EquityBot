@@ -298,29 +298,33 @@ def _validate(intent: dict) -> dict:
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
-def parse_intent(query: str) -> dict:
+def parse_intent(query: str) -> tuple[dict, dict]:
     """
     Parse a free-text query into a structured intent dict.
 
     Strategy:
-      1. Quick regex pre-check — single ticker? Empty? Return immediately.
+      1. Quick regex pre-check — single ticker? Empty? Return immediately
+         with usage={}, no LLM call billed.
       2. LLM call (LLMClient) with the instruction prompt above.
       3. Validate + coerce.
 
-    Returns an empty intent (all-None) if the LLM is unavailable or the
-    output is unparseable. Caller should fall back to treating the query
-    as a single ticker.
+    Returns:
+        (intent, usage)
+          intent  — validated intent dict (all None when un-parseable)
+          usage   — Anthropic-style usage dict (or {} if no LLM call)
+                    with input_tokens, output_tokens, cache_*_tokens.
+                    Callers can plug it straight into _cost_block().
     """
     q = (query or "").strip()
     if not q:
-        return _empty_intent()
+        return _empty_intent(), {}
 
     # Quick pre-check: looks like a plain ticker (no spaces, has caps + maybe a dot)?
     if " " not in q and re.fullmatch(r"\^?[A-Za-z0-9\.\-=]+", q):
         out = _empty_intent()
         out["action"] = "report"
         out["tickers"] = [q.upper()]
-        return out
+        return out, {}
 
     # ── LLM path ─────────────────────────────────────────────────────────────
     try:
@@ -329,7 +333,7 @@ def parse_intent(query: str) -> dict:
         ready, _ = llm.check_configured()
         if not ready:
             logger.warning("[nl_intent] LLM not configured — returning empty intent")
-            return _empty_intent()
+            return _empty_intent(), {}
 
         full_user_prompt = _INTENT_INSTRUCTIONS + q
         raw = llm.generate_json(
@@ -337,10 +341,11 @@ def parse_intent(query: str) -> dict:
             _SYSTEM_PROMPT,
             max_tokens=400,
         )
+        usage = getattr(llm, "last_usage", {}) or {}
     except Exception as e:
         logger.warning(f"[nl_intent] LLM call failed: {e}")
-        return _empty_intent()
+        return _empty_intent(), {}
 
     if not isinstance(raw, dict):
-        return _empty_intent()
-    return _validate(raw)
+        return _empty_intent(), usage
+    return _validate(raw), usage
