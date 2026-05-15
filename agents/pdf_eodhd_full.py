@@ -586,7 +586,9 @@ def _page_balance_sheet(bundle: dict, styles: dict) -> list:
         ("totalStockholderEquity",     "Stockholder Equity", _m),
         ("retainedEarnings",           "Retained Earnings", _m),
         ("commonStock",                "Common Stock (par)", _m),
-        ("commonStockSharesOutstanding","Shares Outstanding", _f0),
+        # Display in millions for column-width consistency with the rest
+        # of the Balance Sheet (the section header already says "millions").
+        ("commonStockSharesOutstanding","Shares Outstanding (M)", _m),
         ("netTangibleAssets",          "Net Tangible Assets", _m),
         ("netWorkingCapital",          "Net Working Capital", _m),
         ("netInvestedCapital",         "Net Invested Capital", _m),
