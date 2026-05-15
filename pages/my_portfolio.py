@@ -519,9 +519,10 @@ st.markdown(
       .pf-hdr     { color: #888; font-size: 11px; padding: 2px 0; }
       .pf-earn    { color: #1B3F6E; font-size: 11px; }
       .pf-earn-na { color: #888; font-size: 11px; font-style: italic; }
-      /* Tighten Streamlit's column gutter */
-      div[data-testid="column"] { padding-left: 4px !important;
-                                  padding-right: 4px !important; }
+      /* Tighten Streamlit's column gutter even further so numeric
+         cells get more room and don't get cut off by ellipsis. */
+      div[data-testid="column"] { padding-left: 2px !important;
+                                  padding-right: 2px !important; }
       /* Tighten button height in row */
       .pf-row button { padding: 0px 6px !important; min-height: 28px !important; }
     </style>
@@ -530,7 +531,8 @@ st.markdown(
 )
 
 # Column widths — must match between header and rows.
-_COL_W = [2.4, 0.9, 1.5, 1.4, 1.3, 0.7, 0.7, 0.8, 1.0, 0.35, 0.35]
+#   Name  Tk   Earn  Price MCap  P/E   ROE   EBIT  YTD   ▾    ✕
+_COL_W = [1.9, 0.8, 1.3, 1.3, 1.2, 1.0, 1.1, 1.0, 1.1, 0.35, 0.35]
 
 # Header row labels (only when there's at least one card)
 if st.session_state.portfolio_tickers:
@@ -565,8 +567,8 @@ else:
         # ── Single-line compact row ──────────────────────────────────────────
         cols = st.columns(_COL_W)
 
-        # 0. Name (truncated hard so it stays on one line)
-        name_disp = (snap["name"] or ticker)[:28]
+        # 0. Name (truncated hard so it stays on one line — full name in tooltip)
+        name_disp = (snap["name"] or ticker)[:22]
         cols[0].markdown(
             f"<div class='pf-cell pf-name' title='{snap['name']}'>"
             f"{name_disp}</div>",
@@ -579,12 +581,12 @@ else:
             unsafe_allow_html=True,
         )
 
-        # 2. Earnings date (or 'nepaskelbta dar')
+        # 2. Earnings date (or 'no date')
         if next_earnings:
             earn = f"📅 {next_earnings}"
             earn_cls = "pf-earn"
         else:
-            earn = "📅 nepaskelbta dar"
+            earn = "📅 no date"
             earn_cls = "pf-earn-na"
         cols[2].markdown(
             f"<div class='pf-cell {earn_cls}'>{earn}</div>",
