@@ -1817,24 +1817,51 @@ if generate_clicked and ticker_input:
                         full_prompt, IA_SYS, max_tokens=8000,
                         report_type="overview",  # adversarial reuses overview merger
                     )
-                    analysis = _validate_analysis(adv_result.merged)
-                    st.write(
-                        f"✓  Industry: **{analysis.get('industry_attractiveness')}** · "
-                        f"Trajectory: **{analysis.get('trajectory')}** · "
-                        f"Advantage: **{analysis.get('competitive_advantage_size')}**"
-                    )
+                    raw_analysis = adv_result.merged
                 else:
-                    analysis = llm.generate_json(
+                    raw_analysis = llm.generate_json(
                         dynamic_prompt, IA_SYS, max_tokens=8000,
                         cacheable_prefix=cacheable_pfx,
                     )
-                    analysis = _validate_analysis(analysis)
-                    st.write(
-                        f"✓  Industry: **{analysis.get('industry_attractiveness')}** · "
-                        f"Trajectory: **{analysis.get('trajectory')}** · "
-                        f"Advantage: **{analysis.get('competitive_advantage_size')}**"
-                    )
                     _show_token_usage(llm.last_usage)
+
+                # ── Diagnostics: detect empty / mostly-empty responses ──
+                _ia_raw_for_debug = getattr(llm, "last_raw_response", "") or ""
+                _ia_top_keys = list(raw_analysis.keys()) if isinstance(raw_analysis, dict) else []
+                _ia_filled = (
+                    isinstance(raw_analysis, dict) and
+                    isinstance(raw_analysis.get("forces"), list) and
+                    len([f for f in raw_analysis["forces"]
+                         if isinstance(f, dict) and f.get("state_2026")
+                         and len(f.get("state_2026", "")) > 80]) >= 3
+                )
+                if not raw_analysis or not _ia_top_keys or not _ia_filled:
+                    # Surface a clear, actionable error with the raw LLM
+                    # response so the user can see exactly what came back.
+                    st.error(
+                        "⚠ The LLM returned an empty or unparseable analysis. "
+                        "Most fields will be blank in the PDF. See the raw "
+                        "response below — common causes: model truncation, "
+                        "JSON formatting issue, or model refusal."
+                    )
+                    st.write(
+                        f"**Debug:** keys returned = `{_ia_top_keys[:8]}` · "
+                        f"raw length = {len(_ia_raw_for_debug):,} chars"
+                    )
+                    with st.expander("📋 Raw LLM response (first 3,000 chars)",
+                                     expanded=False):
+                        st.code(_ia_raw_for_debug[:3000] or "(empty)",
+                                language="json")
+                    with st.expander("📋 Parsed dict", expanded=False):
+                        st.json(raw_analysis if isinstance(raw_analysis, dict)
+                                else {"_parse_failed": True})
+
+                analysis = _validate_analysis(raw_analysis if isinstance(raw_analysis, dict) else {})
+                st.write(
+                    f"✓  Industry: **{analysis.get('industry_attractiveness')}** · "
+                    f"Trajectory: **{analysis.get('trajectory')}** · "
+                    f"Advantage: **{analysis.get('competitive_advantage_size')}**"
+                )
 
                 _prog.progress(90, text="📄  Rendering Industry Analysis PDF…")
                 st.write("📄  Rendering Industry Analysis PDF…")

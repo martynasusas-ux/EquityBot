@@ -108,6 +108,10 @@ class LLMClient:
         Falls back to empty dict on parse failure with an error log.
 
         cacheable_prefix: see generate() — passed through unchanged.
+
+        Side effect: stores the raw response on `self.last_raw_response` so
+        callers can show / log what the model actually said when parsing
+        fails downstream.
         """
         # Ask explicitly for JSON output
         json_instruction = (
@@ -116,6 +120,7 @@ class LLMClient:
         )
         raw = self.generate(user_prompt + json_instruction, system_prompt, max_tokens,
                             cacheable_prefix=cacheable_prefix)
+        self.last_raw_response = raw or ""
 
         # Strip any markdown code fences the model might add despite instructions
         cleaned = _strip_code_fences(raw)
@@ -139,8 +144,8 @@ class LLMClient:
                 except json.JSONDecodeError:
                     pass
             logger.error(
-                f"[LLMClient] JSON parse failed. Raw response (first 500 chars):\n"
-                f"{raw[:500]}"
+                f"[LLMClient] JSON parse failed. Raw response (first 1000 chars):\n"
+                f"{raw[:1000]}"
             )
             return {}
 
@@ -277,13 +282,24 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
 
+        # Force GPT-4o into JSON mode when the prompt clearly requests JSON.
+        # The generate_json() wrapper always appends "Return ONLY valid JSON"
+        # to the user prompt, so this heuristic catches every JSON call.
+        # Without this, GPT-4o frequently returns prose / partial JSON for
+        # complex schemas — which is what was leaving Industry Analysis
+        # PDFs empty.
+        kwargs: dict = dict(
+            model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=messages,
+        )
+        _lc_prompt = (user_prompt or "").lower()
+        if "valid json" in _lc_prompt or "return only valid" in _lc_prompt:
+            kwargs["response_format"] = {"type": "json_object"}
+
         try:
-            resp = client.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=messages,
-            )
+            resp = client.chat.completions.create(**kwargs)
             # Track token usage (same dict shape as Claude for consistency)
             if resp.usage:
                 self.last_usage = {
