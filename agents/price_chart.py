@@ -49,15 +49,46 @@ def generate_price_chart_png(
     width_in: float = 7.5,
     height_in: float = 2.4,
     dpi: int = 130,
+    eod_data: Optional[list] = None,
 ) -> Optional[bytes]:
     """
     Return PNG bytes of a 5-year daily close price chart, or None on failure.
+
+    `eod_data` (optional) — list of {date, close, ...} dicts in EODHD /eod
+    format. When supplied, the chart is rendered exclusively from this data
+    (used by Investment Memo V2 to keep the chart 100% EODHD-sourced).
+    Otherwise we fall back to yfinance → Stooq.
     """
-    dates, prices = _fetch_5y_yfinance(ticker)
-    src = "yfinance"
+    dates: list = []
+    prices: list = []
+    src = ""
+
+    # Priority 1: explicit EODHD /eod bundle passed by caller.
+    if eod_data and isinstance(eod_data, list):
+        from datetime import datetime as _dt
+        for row in eod_data:
+            if not isinstance(row, dict): continue
+            d = row.get("date")
+            p = row.get("close") or row.get("adjusted_close")
+            if d and p not in (None, "", "NA"):
+                try:
+                    dates.append(_dt.strptime(str(d), "%Y-%m-%d"))
+                    prices.append(float(p))
+                except (ValueError, TypeError):
+                    continue
+        if dates:
+            src = "EODHD /eod"
+
+    # Priority 2: yfinance live fetch (V1 path)
+    if not dates:
+        dates, prices = _fetch_5y_yfinance(ticker)
+        src = "yfinance"
+
+    # Priority 3: Stooq fallback
     if not dates:
         dates, prices = _fetch_5y_stooq(ticker)
         src = "stooq"
+
     if not dates or not prices:
         logger.warning(f"[price_chart] No price history for {ticker}")
         return None

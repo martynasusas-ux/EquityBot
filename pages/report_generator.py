@@ -234,7 +234,8 @@ REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
 _BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary",
-                "eodhd_sheet", "eodhd_fundamentals", "eodhd_full"}
+                "eodhd_sheet", "eodhd_fundamentals", "eodhd_full",
+                "overview_v2"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -921,7 +922,81 @@ if generate_clicked and ticker_input:
                 st.write("⚔  Adversarial Mode: Claude + GPT-4o will run independently, "
                          "then cross-critique and merge...")
 
-            if report_type == "overview":
+            if report_type == "overview_v2":
+                # ── Investment Memo V2 — 100% EODHD data ───────────────────
+                # Override `company` with an EODHD-only CompanyData built
+                # directly from /fundamentals + /eod (no yfinance/Stooq/AV
+                # ever runs). Peers are LLM-suggested but each peer's data
+                # is also fetched EODHD-only.
+                from data_sources.eodhd_only_builder import (
+                    fetch_company_data_eodhd_only,
+                )
+                from models.overview import (
+                    _overview_prompt_parts, _calculate_checklist,
+                    SYSTEM_PROMPT as SYS,
+                )
+                _prog.progress(25, text="💎  Fetching EODHD-only data for V2…")
+                st.write("💎  Fetching EODHD bundle (fundamentals + /eod)…")
+                company, _v2_bundle = fetch_company_data_eodhd_only(ticker_input)
+                st.write(f"✓  EODHD endpoints used: {_v2_bundle.get('endpoints_used',0)}/9")
+
+                # Build the LLM prompt with EODHD context only — no news,
+                # no macro blocks (they would be sourced outside EODHD).
+                cacheable_pfx, dynamic_prompt = _overview_prompt_parts(
+                    company, news_block="", macro_country_block="",
+                )
+                _prog.progress(35, text="🤖  Running LLM (EODHD-only context)…")
+                st.write("🤖  Running LLM on EODHD-only context…")
+                analysis = llm.generate_json(dynamic_prompt, SYS,
+                                             max_tokens=5000,
+                                             cacheable_prefix=cacheable_pfx)
+                rec = analysis.get("recommendation", "n/a")
+                st.write(f"✓  Recommendation: **{rec}**")
+                _show_token_usage(llm.last_usage)
+                _prog.progress(65, text="✓  AI analysis complete")
+
+                # Peers — fetch each EODHD-only too
+                _prog.progress(68, text="🔍  Fetching EODHD peer data…")
+                st.write("🔍  Fetching EODHD-only peer data…")
+                peers: dict[str, CompanyData] = {}
+                raw_peers = peer_list or [
+                    p.get("ticker", "")
+                    for p in analysis.get("suggested_peers", [])
+                ]
+                raw_peers = [t.strip().upper() for t in raw_peers if t.strip()][:6]
+                for pt in raw_peers:
+                    try:
+                        pd_, _ = fetch_company_data_eodhd_only(pt)
+                        if pd_.name:
+                            peers[pt] = pd_
+                    except Exception:
+                        pass
+                st.write(f"✓  {len(peers)} EODHD peers loaded: "
+                         f"{', '.join(peers.keys()) or 'none'}")
+                _prog.progress(78, text=f"✓  {len(peers)} peers")
+
+                checklist = _calculate_checklist(company)
+                passed = sum(1 for c in checklist if c["pass"])
+                st.write(f"✓  Checklist: {passed}/{len(checklist)} criteria met")
+                _prog.progress(84)
+
+                _prog.progress(88, text="📄  Rendering V2 PDF…")
+                st.write("📄  Rendering V2 PDF…")
+                import importlib, agents.pdf_overview_v2 as _v2mod
+                importlib.reload(_v2mod)
+                from agents.pdf_overview_v2 import OverviewV2PDFGenerator
+                # Wire the EODHD /eod data into the price chart by stuffing
+                # it onto company so pdf_overview_v2 can pick it up.
+                setattr(company, "_eod_data_v2", _v2_bundle.get("eod") or [])
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_overview_v2_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                OverviewV2PDFGenerator().render(company, analysis, peers,
+                                                 checklist, pdf_path)
+                extra = {"checklist": checklist, "passed": passed}
+
+            elif report_type == "overview":
                 from models.overview import (
                     _build_overview_prompt, _overview_prompt_parts,
                     _calculate_checklist, SYSTEM_PROMPT as SYS,
