@@ -1621,22 +1621,48 @@ if generate_clicked and ticker_input:
                 company, _fpr_bundle = fetch_company_data_eodhd_only(ticker_input)
                 st.write(f"✓  EODHD endpoints used: {_fpr_bundle.get('endpoints_used',0)}/9")
 
-                # Step 2: Peers — required for this framework
+                # Step 2: Peers — required for this framework. If the user
+                # didn't supply any, ask the LLM to suggest some so the
+                # peer page always has content.
                 fpr_peers: dict = {}
+                _fpr_suggest_usage: dict = {}
                 if peer_list:
+                    _peer_tickers_to_fetch = [
+                        p.strip().upper() for p in peer_list if p.strip()
+                    ][:6]
                     _prog.progress(35, text="🔍  Fetching EODHD peer data…")
-                    st.write(f"🔍  Fetching {len(peer_list)} peer(s) from EODHD…")
-                    fpr_peers = fetch_peers_eodhd_only(
-                        [p.strip().upper() for p in peer_list if p.strip()][:6]
-                    )
+                    st.write(f"🔍  Fetching {len(_peer_tickers_to_fetch)} peer(s) from EODHD…")
+                else:
+                    _prog.progress(30, text="🤝  Asking LLM to suggest peers…")
+                    st.write("🤝  No peers supplied — asking LLM for peer suggestions…")
+                    try:
+                        from models.fisher_peers import suggest_peers as _suggest_peers
+                        _peer_tickers_to_fetch, _fpr_suggest_usage = _suggest_peers(
+                            company, max_peers=6,
+                        )
+                    except Exception as _se:
+                        _peer_tickers_to_fetch = []
+                        st.warning(f"Peer suggestion failed: {_se}")
+                    if _fpr_suggest_usage:
+                        _show_token_usage(_fpr_suggest_usage)
+                    if _peer_tickers_to_fetch:
+                        st.write(
+                            f"💡  LLM suggested peers: "
+                            f"{', '.join(_peer_tickers_to_fetch)}"
+                        )
+                    else:
+                        st.warning(
+                            "⚠ LLM could not suggest peers automatically. "
+                            "The peer comparison page will be empty — try "
+                            "adding peers manually in the **Peer Tickers** "
+                            "field."
+                        )
+
+                if _peer_tickers_to_fetch:
+                    _prog.progress(40, text="🔍  Fetching EODHD peer data…")
+                    fpr_peers = fetch_peers_eodhd_only(_peer_tickers_to_fetch)
                     st.write(f"✓  {len(fpr_peers)} peer(s) loaded: "
                              f"{', '.join(fpr_peers.keys()) or 'none'}")
-                else:
-                    st.warning(
-                        "⚠ No peer tickers were supplied. The peer comparison "
-                        "page will be empty. Add peers in the **Peer Tickers** "
-                        "field (space-separated, up to 6)."
-                    )
 
                 # Step 3: Country macro for subject
                 _prog.progress(45, text="🌍  Fetching country macro from EODHD…")
@@ -1673,8 +1699,14 @@ if generate_clicked and ticker_input:
                              f"Rec: **{rec}**")
                     _show_token_usage(llm.last_usage)
 
-                # Track main-Fisher Claude usage for the combined cost block
+                # Track main-Fisher Claude usage for the combined cost block.
+                # Includes the peer-suggestion call too (when it happened).
                 _fpr_main_usage = dict(llm.last_usage or {}) if not adversarial_on else {}
+                if not adversarial_on and _fpr_suggest_usage:
+                    for _k, _v in _fpr_suggest_usage.items():
+                        _fpr_main_usage[_k] = (
+                            (_fpr_main_usage.get(_k) or 0) + (_v or 0)
+                        )
 
                 # Step 5: Peer-batch Fisher LLM call
                 peer_analyses: list = []

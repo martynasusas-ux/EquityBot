@@ -256,6 +256,110 @@ def validate_peer_analysis(raw: dict, expected_tickers: list[str]) -> list[dict]
     return out
 
 
+# ── LLM-suggested peers (when the user supplies none) ────────────────────────
+
+_PEER_SUGGEST_SYSTEM = (
+    "You are a buy-side analyst with deep sector knowledge. Given a subject "
+    "company, suggest its 4-6 most relevant publicly-listed peer companies. "
+    "Peers must trade on a major exchange and have audited financials. "
+    "Return only Yahoo Finance ticker symbols — e.g. AAPL (US), RHM.DE "
+    "(Germany), BA.L (London), LMT (US). Do not invent tickers."
+)
+
+
+_PEER_SUGGEST_PROMPT_TEMPLATE = """\
+Suggest 4-6 publicly-traded peer companies for the subject below. Pick
+peers that compete in the same product / customer / geographic markets,
+have comparable scale (within ~5×), and would be benchmarked against
+each other on Philip Fisher's 15-point qualitative framework.
+
+== SUBJECT COMPANY ==
+Name:     {name}
+Ticker:   {ticker}
+Sector:   {sector}
+Industry: {industry}
+Country:  {country}
+Description: {description}
+
+Return ONLY this JSON shape — no prose, no markdown:
+
+{{
+  "peers": [
+    {{"ticker": "AAPL",  "name": "Apple Inc.",     "rationale": "Why this peer (1 short sentence)"}},
+    {{"ticker": "MSFT",  "name": "Microsoft Corp.", "rationale": "…"}},
+    "... up to 6 entries"
+  ]
+}}
+
+Rules:
+- Yahoo Finance format only — exact suffix matters (.DE, .L, .HE, .TO, .SS, etc.).
+- Do NOT include the subject itself.
+- Do NOT include private companies, mutual funds, ETFs, or indices.
+- If you genuinely can't find peers, return an empty array.
+"""
+
+
+def suggest_peers(subject: CompanyData, max_peers: int = 6
+                  ) -> tuple[list[str], dict]:
+    """
+    Ask the LLM to suggest peer tickers when the user supplied none.
+
+    Returns:
+        (tickers, usage)
+          tickers — list of Yahoo Finance ticker strings (up to max_peers)
+          usage   — Claude/OpenAI usage dict (or {} on failure)
+    """
+    try:
+        from agents.llm_client import LLMClient
+    except Exception:
+        return [], {}
+
+    desc = (subject.description or "")[:600]
+    user_prompt = _PEER_SUGGEST_PROMPT_TEMPLATE.format(
+        name=subject.name or subject.ticker or "?",
+        ticker=subject.ticker or "?",
+        sector=subject.sector or "n/a",
+        industry=subject.industry or "n/a",
+        country=subject.country or "n/a",
+        description=desc or "No description available.",
+    )
+
+    try:
+        llm = LLMClient()
+        ready, _ = llm.check_configured()
+        if not ready:
+            logger.warning("[fisher_peers] LLM not configured — no peer suggestions")
+            return [], {}
+        raw = llm.generate_json(
+            user_prompt, _PEER_SUGGEST_SYSTEM, max_tokens=500,
+        )
+        usage = dict(getattr(llm, "last_usage", {}) or {})
+    except Exception as e:
+        logger.warning(f"[fisher_peers] suggest_peers LLM call failed: {e}")
+        return [], {}
+
+    if not isinstance(raw, dict):
+        return [], usage
+    peers = raw.get("peers")
+    if not isinstance(peers, list):
+        return [], usage
+
+    out: list[str] = []
+    subject_u = (subject.ticker or "").upper()
+    seen: set[str] = {subject_u}
+    for p in peers:
+        if not isinstance(p, dict):
+            continue
+        tk = (p.get("ticker") or "").strip().upper()
+        if not tk or tk in seen:
+            continue
+        seen.add(tk)
+        out.append(tk)
+        if len(out) >= max_peers:
+            break
+    return out, usage
+
+
 # ── Local formatters (kept tiny — same conventions as models/fisher.py) ───────
 
 def _b(v) -> str:
