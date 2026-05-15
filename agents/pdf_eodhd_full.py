@@ -481,6 +481,7 @@ def _page_valuation(bundle: dict, styles: dict) -> list:
 def _financials_section(
     bundle: dict, styles: dict, block_key: str, title: str,
     field_specs: list[tuple], n_years: int = 10,
+    highlight_fields: Optional[list] = None,
 ) -> list:
     """
     Render a financial statement block (IS / BS / CF) as a multi-page table.
@@ -527,14 +528,28 @@ def _financials_section(
     cell_style = ParagraphStyle("c", parent=styles["cell"], fontSize=fs, leading=9)
     lbl_style = ParagraphStyle("l", parent=styles["lbl"], fontSize=fs, leading=9)
 
-    for raw_field, label, fmt in field_specs:
+    highlight_set = set(highlight_fields or [])
+    highlight_row_indices: list[int] = []
+
+    for i, (raw_field, label, fmt) in enumerate(field_specs):
         row = [Paragraph(label, lbl_style)]
         for y in years:
             val = (block.get(y) or {}).get(raw_field)
             row.append(Paragraph(fmt(val) if fmt else _m(val), cell_style))
+        if raw_field in highlight_set:
+            # +1 because header row is index 0
+            highlight_row_indices.append(i + 1)
         rows.append(row)
 
-    el.append(_data_table(rows, col_widths, styles))
+    t = _data_table(rows, col_widths, styles)
+    if highlight_row_indices:
+        # Very-pale Pantone-303 tint — readable highlight, minimal toner
+        ROW_HIGHLIGHT = HexColor("#E0EEF4")
+        extras = []
+        for idx in highlight_row_indices:
+            extras.append(("BACKGROUND", (0, idx), (-1, idx), ROW_HIGHLIGHT))
+        t.setStyle(TableStyle(extras))
+    el.append(t)
     return el
 
 
@@ -607,6 +622,9 @@ def _page_balance_sheet(bundle: dict, styles: dict) -> list:
         bundle, styles, "Balance_Sheet",
         "Balance Sheet — 10y (millions, reporting currency)",
         fields, n_years=10,
+        # Light blue tint behind Shares Outstanding so the eye locks
+        # onto the only-non-monetary row in the table.
+        highlight_fields=["commonStockSharesOutstanding"],
     )
 
 
