@@ -253,7 +253,14 @@ def build_company_data_from_bundle(yf_ticker: str, bundle: dict) -> CompanyData:
         af.gross_profit  = _to_m(inc.get("grossProfit"))
         af.ebit          = _to_m(inc.get("ebit"))
         af.ebitda        = _to_m(inc.get("ebitda"))
-        af.net_income    = _to_m(inc.get("netIncome"))
+        # Prefer netIncomeApplicableToCommonShares — it nets out the
+        # minority-interest share so it matches the EPS denominator.
+        # In years like RHM 2020 the consolidated `netIncome` is +€1M
+        # but the parent-attributable income is -€26M, which is what EPS
+        # reflects. Using the common-shares figure keeps the row internally
+        # consistent (NI sign matches EPS sign).
+        af.net_income    = (_to_m(inc.get("netIncomeApplicableToCommonShares"))
+                            or _to_m(inc.get("netIncome")))
         af.eps_diluted   = _f(inc.get("eps") or inc.get("epsDiluted"))
         af.cost_of_revenue = _to_m(inc.get("costOfRevenue"))
         af.depreciation_amortization = _to_m(
