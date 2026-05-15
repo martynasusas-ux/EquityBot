@@ -68,7 +68,7 @@ def _ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
 
-_ss("selected_fw_id",    "overview")
+_ss("selected_fw_id",    "overview_v2")
 _ss("studio_chat",       [])    # list of {role, content, applied_fields?}
 _ss("studio_pending",    None)  # only used for builtin fork-then-apply flow
 _ss("confirm_delete_id", None)
@@ -127,9 +127,9 @@ Frameworks are JSON configs in frameworks/. When a report is generated:
   3. The LLM returns JSON matching the output_schema field names.
   4. The HTML renderer iterates report_sections to build the final report.
 
-Built-in frameworks (overview, fisher, gravity, kepler_summary, eodhd_sheet) have hardcoded
-Python PDF renderers and use __builtin__ as their prompt_template — they cannot be run as
-custom HTML frameworks.
+Built-in frameworks (overview_v2, fisher, gravity, kepler_summary, eodhd_full, index_overview)
+have hardcoded Python PDF renderers and use __builtin__ as their prompt_template — they
+cannot be run as custom HTML frameworks.
 
 ━━━ ALL AVAILABLE DATA FIELDS ━━━
 Everything below is available on the CompanyData object and exposed via placeholders or {financials}.
@@ -833,21 +833,39 @@ with st.sidebar:
 
     st.divider()
     st.markdown("#### Frameworks")
+    st.caption("Use ↑ / ↓ to reorder. Saved automatically across the app.")
 
-    for fw in fm.list():
+    _fw_list = fm.list()
+    for i, fw in enumerate(_fw_list):
         is_sel = (fw.id == st.session_state.selected_fw_id)
-        if st.button(
-            f"{fw.icon}  {fw.name}",
-            key=f"sel_{fw.id}",
-            use_container_width=True,
-            type="primary" if is_sel else "secondary",
-        ):
-            if not is_sel:
-                st.session_state.selected_fw_id = fw.id
-                st.session_state.studio_chat    = []
-                st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
-                st.session_state.studio_pending = None
-            st.rerun()
+        sel_col, up_col, down_col = st.columns([6, 1, 1])
+        with sel_col:
+            if st.button(
+                f"{fw.icon}  {fw.name}",
+                key=f"sel_{fw.id}",
+                use_container_width=True,
+                type="primary" if is_sel else "secondary",
+            ):
+                if not is_sel:
+                    st.session_state.selected_fw_id = fw.id
+                    st.session_state.studio_chat    = []
+                    st.session_state.studio_usage   = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
+                    st.session_state.studio_pending = None
+                st.rerun()
+        with up_col:
+            if st.button("↑", key=f"me_up_{fw.id}",
+                         disabled=(i == 0),
+                         use_container_width=True,
+                         help="Move up"):
+                fm.move(fw.id, -1)
+                st.rerun()
+        with down_col:
+            if st.button("↓", key=f"me_down_{fw.id}",
+                         disabled=(i == len(_fw_list) - 1),
+                         use_container_width=True,
+                         help="Move down"):
+                fm.move(fw.id, +1)
+                st.rerun()
         tag = "built-in" if fw.is_builtin else ("forked" if fw.base_id else "custom")
         st.caption(f"  {tag}  ·  v{fw.version}")
 
@@ -917,7 +935,12 @@ else:
                 if st.button("Yes, delete", type="primary",
                              use_container_width=True, key="confirm_del"):
                     fm.delete(fw.id)
-                    st.session_state.selected_fw_id    = "overview"
+                    # Fall back to the first remaining framework (built-ins
+                    # appear first, so this is normally overview_v2).
+                    remaining = fm.list()
+                    st.session_state.selected_fw_id = (
+                        remaining[0].id if remaining else "overview_v2"
+                    )
                     st.session_state.confirm_delete_id = None
                     st.rerun()
             with dc2:

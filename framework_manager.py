@@ -40,8 +40,38 @@ logger = logging.getLogger(__name__)
 FRAMEWORKS_DIR = Path(__file__).parent / "frameworks"
 FRAMEWORKS_DIR.mkdir(exist_ok=True)
 
-BUILTIN_IDS = frozenset({"overview", "fisher", "gravity"})
-_BUILTIN_ORDER = {"overview": 0, "fisher": 1, "gravity": 2}
+# Persistent user-defined ordering — saved to data/framework_order.json
+_DATA_DIR = Path(__file__).parent / "data"
+_DATA_DIR.mkdir(exist_ok=True)
+ORDER_FILE = _DATA_DIR / "framework_order.json"
+
+# Legacy set kept for backwards compatibility (delete-protection now reads
+# is_builtin from each FrameworkConfig directly). Updated to reflect the
+# current set of shipped built-ins.
+BUILTIN_IDS = frozenset({
+    "overview_v2", "fisher", "gravity", "kepler_summary",
+    "eodhd_full", "index_overview",
+})
+
+
+def _load_order() -> list[str]:
+    """Return the user-saved framework-id order (empty list if none)."""
+    if not ORDER_FILE.exists():
+        return []
+    try:
+        raw = json.loads(ORDER_FILE.read_text(encoding="utf-8"))
+        order = raw.get("order", [])
+        return [str(x) for x in order if isinstance(x, str)]
+    except Exception:
+        return []
+
+
+def _save_order(order: list[str]) -> None:
+    """Persist the framework-id order to disk."""
+    ORDER_FILE.write_text(
+        json.dumps({"order": order}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 # ── Dataclass ─────────────────────────────────────────────────────────────────
@@ -92,7 +122,13 @@ class FrameworkManager:
     # ── List / Get ────────────────────────────────────────────────────────────
 
     def list(self) -> list[FrameworkConfig]:
-        """All frameworks: built-ins first (fixed order), then user-created A→Z."""
+        """
+        All frameworks, ordered by:
+          1. Persistent user-defined order from data/framework_order.json
+             (frameworks listed there appear in that exact sequence)
+          2. Frameworks not in the saved order go at the end:
+             built-ins first, then user-created — both alphabetical by name.
+        """
         configs = []
         for path in sorted(self.dir.glob("*.json")):
             try:
@@ -101,14 +137,55 @@ class FrameworkManager:
             except Exception as e:
                 logger.warning(f"[FrameworkManager] Could not load {path.name}: {e}")
 
+        saved_order = _load_order()
+        order_idx = {fw_id: i for i, fw_id in enumerate(saved_order)}
+        BIG = 10**6
+
         configs.sort(
             key=lambda c: (
-                0 if c.is_builtin else 1,
-                _BUILTIN_ORDER.get(c.id, 99),
-                c.name.lower(),
+                order_idx.get(c.id, BIG),               # 1) saved order wins
+                0 if c.is_builtin else 1,               # 2) built-ins first
+                c.name.lower(),                          # 3) alphabetical
             )
         )
         return configs
+
+    # ── Ordering helpers ──────────────────────────────────────────────────────
+
+    def get_order(self) -> list[str]:
+        """Return current saved order (framework ids) — empty list if none."""
+        return _load_order()
+
+    def set_order(self, order: list[str]) -> None:
+        """Persist a new framework order. Caller passes the full id list."""
+        # Defensive: drop ids that no longer exist on disk
+        valid_ids = {p.stem for p in self.dir.glob("*.json")}
+        cleaned = [fw_id for fw_id in order if fw_id in valid_ids]
+        _save_order(cleaned)
+        logger.info(f"[FrameworkManager] Saved new order ({len(cleaned)} ids)")
+
+    def move(self, framework_id: str, direction: int) -> None:
+        """
+        Move a framework up (-1) or down (+1) by one slot in the saved order.
+        If no order is saved yet, initialises it from the current list().
+        """
+        if direction not in (-1, 1):
+            raise ValueError("direction must be -1 (up) or +1 (down)")
+
+        order = _load_order()
+        if not order:
+            # Initialise order from the current default list
+            order = [fw.id for fw in self.list()]
+
+        if framework_id not in order:
+            # Framework is new — append, then attempt move.
+            order.append(framework_id)
+
+        idx = order.index(framework_id)
+        new_idx = idx + direction
+        if 0 <= new_idx < len(order):
+            order[idx], order[new_idx] = order[new_idx], order[idx]
+            self.set_order(order)
 
     def get(self, framework_id: str) -> Optional[FrameworkConfig]:
         path = self.dir / f"{framework_id}.json"

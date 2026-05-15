@@ -233,9 +233,8 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary",
-                "eodhd_sheet", "eodhd_fundamentals", "eodhd_full",
-                "overview_v2"}
+_BUILTIN_IDS = {"fisher", "gravity", "kepler_summary",
+                "eodhd_full", "overview_v2", "index_overview"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -271,9 +270,10 @@ def _parse_intent_regex(q: str) -> dict:
 
     # Framework keywords
     fw_hints = {
-        "gravity":  ["gravity", "taxer", "choke", "toll"],
-        "fisher":   ["fisher", "scuttlebutt", "philip fisher"],
-        "overview": ["overview", "helmer", "7 power", "seven power"],
+        "gravity":     ["gravity", "taxer", "choke", "toll"],
+        "fisher":      ["fisher", "scuttlebutt", "philip fisher"],
+        "overview_v2": ["overview", "memo", "investment memo", "helmer",
+                        "7 power", "seven power"],
     }
     for fw_id, kws in fw_hints.items():
         if any(k in q_lo for k in kws):
@@ -585,6 +585,42 @@ with col_left:
         if not (_is_index_ticker and index_mode == "index_overview")
         else "#### Framework  *(auto-selected)*"
     )
+
+    # ── Reorder UI (collapsed by default) ─────────────────────────────────────
+    # Only shown when the user is in normal equity / screening mode (where
+    # they actually pick from the list). Hidden when index_overview locks
+    # the selection automatically.
+    if not (_is_index_ticker and index_mode == "index_overview"):
+        with st.expander("↕ Reorder framework list", expanded=False):
+            st.caption(
+                "Use the arrows to move a framework up or down. The order "
+                "is saved automatically and applies everywhere."
+            )
+            fm_reorder = FrameworkManager()
+            # Show ALL frameworks (excluding index_overview which is implicit)
+            reorder_ids = [k for k in REPORT_TYPES if k != "index_overview"]
+            for i, fid in enumerate(reorder_ids):
+                row_left, row_up, row_down = st.columns([8, 1, 1])
+                with row_left:
+                    st.markdown(
+                        f"<div style='padding-top:6px;'>"
+                        f"{REPORT_TYPES[fid]['label']}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with row_up:
+                    if st.button("↑", key=f"order_up_{fid}",
+                                 disabled=(i == 0),
+                                 use_container_width=True):
+                        fm_reorder.move(fid, -1)
+                        st.rerun()
+                with row_down:
+                    if st.button("↓", key=f"order_down_{fid}",
+                                 disabled=(i == len(reorder_ids) - 1),
+                                 use_container_width=True):
+                        fm_reorder.move(fid, +1)
+                        st.rerun()
+
     report_type = st.radio(
         "Report type",
         options=_fw_options,
@@ -605,7 +641,7 @@ with col_right:
         "Peer tickers",
         placeholder="REL.L  TRI.TO  MSFT  (space-separated, up to 6)",
         label_visibility="collapsed",
-        disabled=(report_type != "overview"),
+        disabled=(report_type != "overview_v2"),
         key="peers_input",
     )
 
@@ -1003,76 +1039,6 @@ if generate_clicked and ticker_input:
                                                  checklist, pdf_path)
                 extra = {"checklist": checklist, "passed": passed}
 
-            elif report_type == "overview":
-                from models.overview import (
-                    _build_overview_prompt, _overview_prompt_parts,
-                    _calculate_checklist, SYSTEM_PROMPT as SYS,
-                )
-                cacheable_pfx, dynamic_prompt = _overview_prompt_parts(
-                    company, news_block=_news_block, macro_country_block=_country_macro_block
-                )
-
-                if adversarial_on:
-                    _prog.progress(25, text="⚔  Step 1/4: Claude analysis…")
-                    st.write("   → Step 1/4: Claude analysis...")
-                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
-                    adv_result = _adv_engine.run(full_prompt, SYS, max_tokens=5000,
-                                                  report_type="overview")
-                    analysis = adv_result.merged
-                    rec_note = (
-                        f"**{adv_result.primary_rec}** (Claude) vs "
-                        f"**{adv_result.secondary_rec}** (GPT-4o) → "
-                        f"merged: **{analysis.get('recommendation','?')}**"
-                    )
-                    st.write(f"✓  Dual-model recommendations: {rec_note}")
-                    st.write(f"   Consensus: {len(adv_result.consensus_fields)} fields  ·  "
-                             f"Contested: {len(adv_result.contested_fields)} fields")
-                else:
-                    analysis = llm.generate_json(dynamic_prompt, SYS, max_tokens=5000,
-                                                 cacheable_prefix=cacheable_pfx)
-                    rec = analysis.get("recommendation", "n/a")
-                    st.write(f"✓  Recommendation: **{rec}**")
-                    _show_token_usage(llm.last_usage)
-                _prog.progress(65, text="✓  AI analysis complete")
-
-                # ── Step 3: Peers ─────────────────────────────────────────────
-                _prog.progress(68, text="🔍  Fetching peer data…")
-                st.write("🔍  Fetching peer comparison data...")
-                peers: dict[str, CompanyData] = {}
-                raw_peers = peer_list or [
-                    p.get("ticker", "")
-                    for p in analysis.get("suggested_peers", [])
-                ]
-                raw_peers = [t.strip().upper() for t in raw_peers if t.strip()][:6]
-                for pt in raw_peers:
-                    try:
-                        pd_ = dm.get(pt)
-                        if pd_.name:
-                            peers[pt] = pd_
-                    except Exception:
-                        pass
-                st.write(f"✓  {len(peers)} peers loaded: "
-                         f"{', '.join(peers.keys()) or 'none'}")
-                _prog.progress(78, text=f"✓  {len(peers)} peers loaded")
-
-                # ── Step 4: Checklist ─────────────────────────────────────────
-                checklist = _calculate_checklist(company)
-                passed    = sum(1 for c in checklist if c["pass"])
-                st.write(f"✓  Checklist: {passed}/{len(checklist)} criteria met")
-                _prog.progress(84, text=f"✓  Checklist: {passed}/{len(checklist)}")
-
-                # ── Step 5: PDF ───────────────────────────────────────────────
-                _prog.progress(88, text="📄  Rendering PDF…")
-                st.write("📄  Rendering PDF...")
-                from agents.pdf_overview import OverviewPDFGenerator
-                safe = ticker_input.replace(".", "_").replace("-", "_")
-                date = datetime.now().strftime("%Y-%m-%d")
-                pdf_path = str(OUTPUTS_DIR / f"{safe}_overview_{date}.pdf")
-                os.makedirs(OUTPUTS_DIR, exist_ok=True)
-                OverviewPDFGenerator().render(company, analysis, peers, checklist,
-                                              pdf_path, adv_result=adv_result)
-                extra = {"checklist": checklist, "passed": passed}
-
             elif report_type == "fisher":
                 from models.fisher import (
                     _build_fisher_prompt, _fisher_prompt_parts,
@@ -1131,22 +1097,6 @@ if generate_clicked and ticker_input:
                 KeplerPDFGenerator().render(company, analysis, pdf_path)
                 extra = {}
 
-            elif report_type == "eodhd_sheet":
-                # ── EODHD Comprehensive Fundamental Data Sheet ────────────────
-                # No LLM call — pure data dump from EODHD fields.
-                _prog.progress(80, text="📄  Rendering EODHD Data Sheet…")
-                st.write("📄  Rendering EODHD Data Sheet…")
-                import importlib, agents.pdf_eodhd_sheet as _esmod
-                importlib.reload(_esmod)
-                from agents.pdf_eodhd_sheet import EODHDSheetGenerator
-                safe = ticker_input.replace(".", "_").replace("-", "_")
-                date = datetime.now().strftime("%Y-%m-%d")
-                pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_sheet_{date}.pdf")
-                os.makedirs(OUTPUTS_DIR, exist_ok=True)
-                EODHDSheetGenerator().render(company, pdf_path)
-                analysis = {}
-                extra = {}
-
             elif report_type == "eodhd_full":
                 # ── EODHD All-In-One full data dump ────────────────────────────
                 # Standalone fetcher; NO other data sources. Fetches every
@@ -1170,22 +1120,6 @@ if generate_clicked and ticker_input:
                 pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_full_{date}.pdf")
                 os.makedirs(OUTPUTS_DIR, exist_ok=True)
                 EODHDFullGenerator().render(bundle, pdf_path)
-                analysis = {}
-                extra = {}
-
-            elif report_type == "eodhd_fundamentals":
-                # ── EODHD Fundamentals Data From API ──────────────────────────
-                # No LLM call — 4-page analysis: profile, P&L, BS/CF, scorecard.
-                _prog.progress(80, text="📄  Rendering EODHD Fundamentals report…")
-                st.write("📄  Rendering EODHD Fundamentals report…")
-                import importlib, agents.pdf_eodhd_fundamentals as _efmod
-                importlib.reload(_efmod)
-                from agents.pdf_eodhd_fundamentals import EODHDFundamentalsGenerator
-                safe = ticker_input.replace(".", "_").replace("-", "_")
-                date = datetime.now().strftime("%Y-%m-%d")
-                pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_fundamentals_{date}.pdf")
-                os.makedirs(OUTPUTS_DIR, exist_ok=True)
-                EODHDFundamentalsGenerator().render(company, pdf_path)
                 analysis = {}
                 extra = {}
 
@@ -1276,7 +1210,7 @@ if generate_clicked and ticker_input:
             if adv_result is not None:
                 _usage_claude = adv_result.claude_usage
                 _usage_openai = adv_result.openai_usage
-            elif report_type in ("kepler_summary", "eodhd_sheet", "eodhd_fundamentals", "eodhd_full"):
+            elif report_type in ("kepler_summary", "eodhd_full"):
                 _usage_claude = {}
                 _usage_openai = None
             else:
@@ -1383,7 +1317,7 @@ if st.session_state.report_result:
             )
 
         # Extra framework metrics
-        if rtype == "overview":
+        if rtype == "overview_v2":
             passed = extra.get("passed", 0)
             total  = len(extra.get("checklist", []))
             st.caption(f"Checklist: **{passed}/{total}** criteria met  ·  "

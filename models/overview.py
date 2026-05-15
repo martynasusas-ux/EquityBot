@@ -345,119 +345,11 @@ def _calculate_checklist(company: CompanyData) -> list[dict]:
     return checks
 
 
-# ── Main model class ──────────────────────────────────────────────────────────
-
-class OverviewModel:
-    """
-    Orchestrates: data fetch → LLM analysis → peer fetch → PDF generation.
-    Returns path to the generated PDF.
-    """
-
-    def __init__(self):
-        self.dm  = DataManager()
-        self.llm = LLMClient()
-
-    def run(
-        self,
-        ticker: str,
-        peer_tickers: Optional[list[str]] = None,
-        force_refresh: bool = False,
-        output_path: Optional[str] = None,
-    ) -> str:
-        """
-        Full pipeline. Returns path to generated PDF.
-
-        Args:
-            ticker:       Main company ticker (Yahoo Finance format)
-            peer_tickers: Override peer list (otherwise LLM suggests them)
-            force_refresh: Bypass data cache
-            output_path:  Custom output path (auto-generated if not set)
-        """
-        # ── Step 1: Fetch company data ────────────────────────────────────────
-        logger.info(f"[Overview] Starting for {ticker}")
-        print(f"  [1/5] Fetching data for {ticker}…")
-        company = self.dm.get(ticker, force_refresh=force_refresh)
-
-        if not company.name:
-            raise ValueError(
-                f"Could not fetch data for ticker '{ticker}'. "
-                f"Check ticker format and try again."
-            )
-        print(f"         {company.name} | {company.year_range()} | "
-              f"{company.completeness_pct()}% complete")
-
-        # ── Step 2: LLM analysis ──────────────────────────────────────────────
-        print(f"  [2/5] Running LLM analysis ({self.llm.provider}/{self.llm.model})…")
-        ready, msg = self.llm.check_configured()
-        if not ready:
-            raise RuntimeError(f"LLM not configured: {msg}")
-
-        prompt = _build_overview_prompt(company)
-        adv_result = None
-
-        if ADVERSARIAL_MODE:
-            print(f"         [Adversarial Mode] Running Claude + GPT-4o dual analysis…")
-            from agents.adversarial import AdversarialEngine
-            engine     = AdversarialEngine()
-            adv_result = engine.run(prompt, SYSTEM_PROMPT, max_tokens=5000,
-                                    report_type="overview")
-            analysis   = adv_result.merged
-        else:
-            analysis = self.llm.generate_json(prompt, SYSTEM_PROMPT, max_tokens=5000)
-
-        if not analysis:
-            raise RuntimeError("LLM returned empty analysis. Check API key and model.")
-
-        print(f"         Recommendation: {analysis.get('recommendation', 'n/a')}"
-              + (" [MERGED]" if adv_result else ""))
-
-        # ── Step 3: Fetch peer data ───────────────────────────────────────────
-        print(f"  [3/5] Fetching peer data…")
-        peers: dict[str, CompanyData] = {}
-
-        # Use provided peer_tickers OR what the LLM suggested
-        raw_peers = peer_tickers or [
-            p.get("ticker", "") for p in analysis.get("suggested_peers", [])
-        ]
-        raw_peers = [t.strip().upper() for t in raw_peers if t.strip()][:6]
-
-        for pticker in raw_peers:
-            try:
-                print(f"         {pticker}…", end="", flush=True)
-                pdata = self.dm.get(pticker)
-                if pdata.name:
-                    peers[pticker] = pdata
-                    print(f" OK ({pdata.name})")
-                else:
-                    print(f" skipped (no data)")
-            except Exception as e:
-                print(f" error: {e}")
-                logger.warning(f"[Overview] Peer fetch failed for {pticker}: {e}")
-
-        print(f"         {len(peers)} peers loaded.")
-
-        # ── Step 4: Checklist ─────────────────────────────────────────────────
-        print(f"  [4/5] Computing investment checklist…")
-        checklist = _calculate_checklist(company)
-        passed = sum(1 for c in checklist if c["pass"])
-        print(f"         {passed}/{len(checklist)} criteria met")
-
-        # ── Step 5: Generate PDF ──────────────────────────────────────────────
-        print(f"  [5/5] Generating PDF…")
-        from agents.pdf_overview import OverviewPDFGenerator
-
-        if not output_path:
-            safe = ticker.replace(".", "_").replace("-", "_")
-            date_str = datetime.utcnow().strftime("%Y-%m-%d")
-            output_path = str(OUTPUTS_DIR / f"{safe}_overview_{date_str}.pdf")
-
-        gen = OverviewPDFGenerator()
-        gen.render(company, analysis, peers, checklist, output_path,
-                   adv_result=adv_result)
-
-        print(f"\n  Report saved: {output_path}")
-        logger.info(f"[Overview] Done. PDF at {output_path}")
-        return output_path
+# ── NOTE: OverviewModel + CLI entry point removed when the original
+# "Investment Memo" framework was deleted. Investment Memo V2 (EODHD-only)
+# now drives the dispatch in pages/report_generator.py directly, and it
+# imports _overview_prompt_parts, _calculate_checklist and SYSTEM_PROMPT
+# from this module — those are the only public surface that remains.
 
 
 # ── Formatters ────────────────────────────────────────────────────────────────
@@ -476,35 +368,4 @@ def _x(v, dp=1) -> str:
     return f"{v:.{dp}f}x" if v is not None else "n/a"
 
 
-# ── CLI entry point ───────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s  %(levelname)-7s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    parser = argparse.ArgumentParser(description="Generate Investment Memo PDF")
-    parser.add_argument("ticker", help="Ticker symbol (e.g. WKL.AS, AAPL)")
-    parser.add_argument("--peers", nargs="*", help="Override peer tickers")
-    parser.add_argument("--refresh", action="store_true", help="Bypass cache")
-    parser.add_argument("--out", help="Custom output path")
-    args = parser.parse_args()
-
-    print(f"\nYour Humble EquityBot — Investment Memo")
-    print(f"{'='*50}")
-    print(f"Ticker: {args.ticker}")
-    if args.peers:
-        print(f"Peers:  {', '.join(args.peers)}")
-    print()
-
-    model = OverviewModel()
-    path  = model.run(
-        ticker=args.ticker,
-        peer_tickers=args.peers,
-        force_refresh=args.refresh,
-        output_path=args.out,
-    )
-    print(f"\nDone. Open: {path}")
+# CLI entry point removed — see note near top of file.
