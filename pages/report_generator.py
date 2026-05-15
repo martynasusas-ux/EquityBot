@@ -833,6 +833,41 @@ with col_left:
                         st.toast(f"{_row['ticker']} already in portfolio",
                                  icon="ℹ️")
 
+        # ── Bulk action: run currently selected framework on ALL rows ────────
+        # Frameworks like Gravity Taxers and Fisher are explicitly designed
+        # for multi-company comparison — running the analysis once and
+        # producing a side-by-side HTML report.
+        _current_fw_id = (
+            (_intent_for_render.get("framework_id"))
+            or st.session_state.get("report_type")
+            or "overview_v2"
+        )
+        _current_fw_label = REPORT_TYPES.get(_current_fw_id, {}).get(
+            "label", _current_fw_id
+        )
+        ba1, ba2 = st.columns([3, 2])
+        with ba1:
+            st.markdown(
+                "<div style='padding-top:8px;color:#666;font-size:13px;'>"
+                "💡 Pick a framework below, then run it on the whole list "
+                "to get a side-by-side comparison report."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        with ba2:
+            _bulk_label = (
+                f"🚀 Run {_current_fw_label} on all {len(_rows_for_render)}"
+            )
+            if st.button(_bulk_label, use_container_width=True,
+                         type="primary", key="scr_run_bulk"):
+                st.session_state.rg_bulk_run = {
+                    "tickers":      [r["ticker"] for r in _rows_for_render],
+                    "universe":     _universe,
+                    "framework_id": _current_fw_id,
+                    "label":        f"{_universe} top {len(_rows_for_render)}",
+                }
+                st.rerun()
+
         st.markdown("<hr style='margin:6px 0;'>", unsafe_allow_html=True)
 
     # Compute working ticker_input from session_state — drives all the
@@ -992,6 +1027,82 @@ with col_right:
         st.caption("💡 Natural language detected — click Generate to interpret and run.")
 
 st.divider()
+
+
+# ── Bulk run from screener table ──────────────────────────────────────────────
+# Triggered by the "🚀 Run [Framework] on all N" button in the screener
+# result section. We bypass the normal generate-button form entirely and
+# dispatch a Universe Screen using the pre-filtered tickers from the table.
+_bulk = st.session_state.pop("rg_bulk_run", None)
+if _bulk:
+    _b_tickers      = _bulk.get("tickers") or []
+    _b_framework    = _bulk.get("framework_id") or "overview_v2"
+    _b_universe     = _bulk.get("universe") or "CUSTOM"
+    _b_label        = _bulk.get("label") or "Custom selection"
+    if _b_tickers:
+        st.session_state.report_result = None
+        st.session_state.error_msg = None
+        _b_fw_short = REPORT_TYPES.get(_b_framework, {}).get("short", _b_framework)
+        with st.status(
+            f"🚀 Running **{_b_fw_short}** on {len(_b_tickers)} companies "
+            f"({_b_label})…",
+            expanded=True,
+        ) as _bulk_status:
+            try:
+                _bprog = st.progress(0, text="Initializing…")
+                _bstep = st.empty()
+                def _bulk_progress(pct: int, msg: str) -> None:
+                    _bprog.progress(min(pct, 99), text=msg)
+                    _bstep.write(msg)
+
+                from models.universe_screener import UniverseScreener
+                _safe_uni = _b_universe.replace("^", "").replace(".", "_") or "custom"
+                _safe_fw  = _b_framework.replace("_", "-")
+                _date     = datetime.now().strftime("%Y-%m-%d")
+                _pdf_path = str(
+                    OUTPUTS_DIR /
+                    f"{_safe_uni}_{_safe_fw}_universe_{_date}.html"
+                )
+                _screener  = UniverseScreener()
+                _html_path = _screener.run(
+                    index_ticker=_b_universe,
+                    framework_id=_b_framework,
+                    output_path=_pdf_path,
+                    tickers=_b_tickers,
+                    progress_cb=_bulk_progress,
+                )
+                _bprog.progress(100, text="✅  Report ready!")
+                with open(_html_path, "r", encoding="utf-8") as _f:
+                    _html_content = _f.read()
+
+                _bulk_status.update(
+                    label=f"✅  {_b_fw_short} Universe Screen complete "
+                          f"({len(_b_tickers)} companies)",
+                    state="complete", expanded=False,
+                )
+                st.session_state.report_result = {
+                    "pdf_path":    _html_path,
+                    "company":     None,
+                    "index_data":  None,
+                    "analysis":    {},
+                    "report_type": f"universe_{_b_framework}",
+                    "rec":         "n/a",
+                    "extra":       {"html_content": _html_content},
+                    "adversarial": None,
+                }
+                _bulk_label_chip = f"{_b_label} · {_b_fw_short} · {_date}"
+                st.session_state.recent_reports.append({
+                    "label": _bulk_label_chip,
+                    "path":  _html_path,
+                    "ts":    datetime.now().timestamp(),
+                })
+            except Exception as _e:
+                _bulk_status.update(
+                    label=f"❌  Bulk run failed",
+                    state="error", expanded=True,
+                )
+                st.error(f"**Error:** {_e}")
+                logger.exception("Bulk universe run failed")
 
 
 # ── Report generation ─────────────────────────────────────────────────────────

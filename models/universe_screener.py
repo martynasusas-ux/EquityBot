@@ -45,10 +45,18 @@ class UniverseScreener:
         output_path: Optional[str] = None,
         force_refresh: bool = False,
         progress_cb: Optional[Callable[[int, str], None]] = None,
+        tickers: Optional[list[str]] = None,
     ) -> str:
         """
         Run the full pipeline. Returns path to the saved HTML report.
         progress_cb(pct: int, msg: str) is called at each step if provided.
+
+        Args:
+            index_ticker  — e.g. "^GSPC". Used as the report's label.
+            framework_id  — which framework to apply (fisher, gravity, …)
+            tickers       — OPTIONAL pre-filtered list of Yahoo-format tickers
+                            (e.g. the top 10 from a screener). When provided,
+                            the constituent-resolver step is skipped entirely.
         """
         from constituent_resolver import ConstituentResolver
         from data_sources.data_manager import DataManager
@@ -64,11 +72,14 @@ class UniverseScreener:
         if fw is None:
             raise ValueError(f"Framework '{framework_id}' not found.")
 
-        _prog(5, f"Resolving {index_ticker} constituents…")
-
-        # ── Resolve constituents ───────────────────────────────────────────────
-        resolver     = ConstituentResolver()
-        constituents = resolver.resolve(index_ticker, force_refresh=force_refresh)
+        # ── Resolve constituents — or use pre-filtered list ────────────────────
+        if tickers:
+            constituents = [t.strip().upper() for t in tickers if t and isinstance(t, str)]
+            _prog(5, f"Using {len(constituents)} pre-filtered constituents…")
+        else:
+            _prog(5, f"Resolving {index_ticker} constituents…")
+            resolver     = ConstituentResolver()
+            constituents = resolver.resolve(index_ticker, force_refresh=force_refresh)
 
         if not constituents:
             raise ValueError(
