@@ -202,7 +202,9 @@ class EODHDAllInOneFetcher:
         endpoints = [
             ("fundamentals", lambda: self.fetch_fundamentals(eodhd_ticker)),
             ("realtime",     lambda: self.fetch_realtime(eodhd_ticker)),
-            ("eod",          lambda: self.fetch_eod_history(eodhd_ticker, 5)),
+            # 11 years so historical year-end closes cover the full 10-year
+            # financial table in Investment Memo V2.
+            ("eod",          lambda: self.fetch_eod_history(eodhd_ticker, 11)),
             ("dividends",    lambda: self.fetch_dividends(eodhd_ticker)),
             ("splits",       lambda: self.fetch_splits(eodhd_ticker)),
             ("insider",      lambda: self.fetch_insider(eodhd_ticker, 50)),

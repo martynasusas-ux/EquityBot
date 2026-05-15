@@ -186,19 +186,36 @@ def build_company_data_from_bundle(yf_ticker: str, bundle: dict) -> CompanyData:
         _f(h.get("EPSEstimateNextYear")) or _f(h.get("EPSEstimateCurrentYear"))
     )
 
-    # Build ForwardEstimates from Earnings.Trend (closest future fiscal-year entry)
+    # Build ForwardEstimates from Earnings.Trend
     earnings = fund.get("Earnings") or {}
     trend = earnings.get("Trend") or {}
     if isinstance(trend, dict):
-        cur_year = datetime.utcnow().year
+        # We need to know the latest historical year BEFORE picking the
+        # forecast — otherwise EODHD's `period: "0y"` entries (which can
+        # represent a fiscal year that has already been reported) leak into
+        # the table as a duplicate estimate column.
+        latest_hist_year_for_fe = None
+        inc_dict = (fund.get("Financials") or {}).get("Income_Statement", {}) \
+                     .get("yearly") or {}
+        if isinstance(inc_dict, dict) and inc_dict:
+            inc_years = [
+                _year_from_date(k) for k in inc_dict.keys()
+                if _year_from_date(k)
+            ]
+            if inc_years:
+                latest_hist_year_for_fe = max(inc_years)
+
         candidates = []
         for date_str, entry in trend.items():
             if not isinstance(entry, dict): continue
             yr = _year_from_date(date_str)
             period = (entry.get("period") or "").strip()
-            # Annual entries are flagged "0y" / "+1y" / "+2y"
-            if yr and period and period.endswith("y") and yr >= cur_year - 1:
-                candidates.append((yr, entry))
+            if not (yr and period and period.endswith("y")):
+                continue
+            # Only fiscal years strictly newer than the latest reported year.
+            if latest_hist_year_for_fe is not None and yr <= latest_hist_year_for_fe:
+                continue
+            candidates.append((yr, entry))
         candidates.sort(key=lambda x: x[0])
         if candidates:
             target_year, entry = candidates[0]
@@ -300,6 +317,9 @@ def build_company_data_from_bundle(yf_ticker: str, bundle: dict) -> CompanyData:
         company.annual_financials[yr] = af
 
     # ── Per-year shares outstanding from outstandingShares.annual ────────────
+    # Only update years that ALREADY have income-statement data. Otherwise
+    # EODHD's forward 2026 entry creates a half-populated row that pollutes
+    # the 10-year table (no revenue / NI / EPS but a shares figure).
     shares_block = (fund.get("outstandingShares") or {}).get("annual") or {}
     if isinstance(shares_block, dict):
         for _k, row in shares_block.items():
@@ -315,21 +335,77 @@ def build_company_data_from_bundle(yf_ticker: str, bundle: dict) -> CompanyData:
             if shares_in_m is None: continue
             af = company.annual_financials.get(yr)
             if af is None:
-                af = AnnualFinancials(year=yr)
-                af.source = "eodhd"
-                company.annual_financials[yr] = af
+                # Skip years that don't have an income-statement row.
+                continue
             af.shares_outstanding = shares_in_m
 
     # ── Apply EPS from Earnings.Annual (underlying / adjusted) ───────────────
+    # EODHD's "Earnings.Annual" block confusingly also contains the most
+    # recent quarterly result (e.g. "2026-03-31" with Q1 epsActual). Skip
+    # those — only apply entries whose month matches the fiscal year-end
+    # of the income statement.
     annual_eps = earnings.get("Annual") or {}
+    fy_months = set()
+    for ds in inc_a.keys():
+        if isinstance(ds, str) and len(ds) >= 7:
+            try: fy_months.add(int(ds[5:7]))
+            except (ValueError, TypeError): pass
+
     if isinstance(annual_eps, dict):
         for date_str, entry in annual_eps.items():
             if not isinstance(entry, dict): continue
             yr = _year_from_date(date_str)
-            if yr and yr in company.annual_financials:
-                eps_val = _f(entry.get("epsActual"))
-                if eps_val is not None:
-                    company.annual_financials[yr].eps_diluted = eps_val
+            if not yr or yr not in company.annual_financials:
+                continue
+            # If we know the fiscal-year-end months, require a match.
+            if fy_months and isinstance(date_str, str) and len(date_str) >= 7:
+                try:
+                    month = int(date_str[5:7])
+                    if month not in fy_months:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            eps_val = _f(entry.get("epsActual"))
+            if eps_val is not None:
+                company.annual_financials[yr].eps_diluted = eps_val
+
+    # ── Per-year DPS from /div endpoint (full dividend history) ──────────────
+    # Sum every dividend record into the matching fiscal year so the
+    # historical Div Yield row populates for every year EODHD covers.
+    divs = bundle.get("dividends") or []
+    if isinstance(divs, list) and divs:
+        dps_by_year: dict[int, float] = {}
+        for d in divs:
+            if not isinstance(d, dict): continue
+            dt = d.get("date") or d.get("paymentDate")
+            val = _f(d.get("value"))
+            yr = _year_from_date(dt)
+            if yr is not None and val is not None:
+                dps_by_year[yr] = dps_by_year.get(yr, 0.0) + val
+        # German "spring payer" detection: dividends often paid in months
+        # 4-6 of the following fiscal year. If >=70% of dividends fall in
+        # months 4-6, shift each year's total back by one fiscal year.
+        spring_count = 0
+        total_count = 0
+        for d in divs:
+            if not isinstance(d, dict): continue
+            dt = d.get("date") or d.get("paymentDate")
+            if not dt or len(str(dt)) < 7: continue
+            try:
+                m = int(str(dt)[5:7])
+                total_count += 1
+                if 4 <= m <= 6:
+                    spring_count += 1
+            except (ValueError, TypeError):
+                continue
+        if total_count and spring_count / total_count >= 0.7:
+            shifted = {yr - 1: v for yr, v in dps_by_year.items()}
+            dps_by_year = shifted
+
+        for yr, dps in dps_by_year.items():
+            af = company.annual_financials.get(yr)
+            if af and af.dividends_per_share is None:
+                af.dividends_per_share = dps
 
     # ── Historical year-end prices from /eod history ─────────────────────────
     eod = bundle.get("eod") or []

@@ -967,10 +967,17 @@ if generate_clicked and ticker_input:
                 for pt in raw_peers:
                     try:
                         pd_, _ = fetch_company_data_eodhd_only(pt)
-                        if pd_.name:
+                        # Only keep peers EODHD actually returned data for —
+                        # market_cap is the cheapest "real data" signal.
+                        # Drop hallucinated tickers that yield empty payloads.
+                        la_check = pd_.latest_annual()
+                        has_rev = bool(la_check and la_check.revenue)
+                        if pd_.name and (pd_.market_cap or has_rev):
                             peers[pt] = pd_
-                    except Exception:
-                        pass
+                        else:
+                            st.write(f"   ⚠ Peer {pt} returned no usable EODHD data — skipped")
+                    except Exception as e:
+                        st.write(f"   ⚠ Peer {pt} fetch failed: {e}")
                 st.write(f"✓  {len(peers)} EODHD peers loaded: "
                          f"{', '.join(peers.keys()) or 'none'}")
                 _prog.progress(78, text=f"✓  {len(peers)} peers")
