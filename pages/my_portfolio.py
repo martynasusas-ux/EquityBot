@@ -156,7 +156,11 @@ def _fetch_snapshot(yf_ticker: str) -> dict:
             for row in eod:
                 if not isinstance(row, dict):
                     continue
-                c = _to_float(row.get("close"))
+                # Prefer split/dividend-adjusted close so a YoY split
+                # (e.g. AAPL Aug 2020) doesn't break the YTD%.
+                c = (_to_float(row.get("adjusted_close"))
+                     or _to_float(row.get("adjusted"))
+                     or _to_float(row.get("close")))
                 if c and c > 0:
                     try:
                         ytd_pct = (float(price) / c - 1)
@@ -246,6 +250,9 @@ def _fetch_history(yf_ticker: str, period: str) -> Optional[pd.DataFrame]:
             return None
 
     # ── All other periods: daily OHLC ────────────────────────────────────────
+    # We prefer EODHD's `adjusted_close` (split- and dividend-adjusted) so
+    # multi-year charts (especially "All") don't show a phantom dip on the
+    # day of a stock split — e.g. AAPL's 4-for-1 in Aug 2020.
     start, end = _period_range(period)
     params = {"period": "d", "order": "a", "to": end.isoformat()}
     if start is not None:
@@ -255,12 +262,22 @@ def _fetch_history(yf_ticker: str, period: str) -> Optional[pd.DataFrame]:
         return None
     try:
         df = pd.DataFrame(data)
-        if "date" not in df.columns or "close" not in df.columns:
+        if "date" not in df.columns:
+            return None
+        # Choose the best price column: adjusted_close → adjusted → close
+        price_col = None
+        for cand in ("adjusted_close", "adjusted", "close"):
+            if cand in df.columns:
+                price_col = cand
+                break
+        if price_col is None:
             return None
         df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")[["close"]].rename(columns={"close": "Close"})
+        df = df.set_index("date")[[price_col]].rename(columns={price_col: "Close"})
         df.index.name = "Date"
-        return df
+        # Drop any rows where the price came back as None / NaN
+        df = df.dropna(subset=["Close"])
+        return df if not df.empty else None
     except Exception:
         return None
 
