@@ -3,6 +3,7 @@ report_generator.py — Report Generator page for Your Humble EquityBot.
 """
 from __future__ import annotations
 import base64
+import json
 import logging
 import os
 import sys
@@ -25,6 +26,7 @@ from agents.llm_client import LLMClient
 from data_sources.data_manager import DataManager
 from data_sources.base import CompanyData
 from framework_manager import FrameworkManager
+from streamlit_searchbox import st_searchbox
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -193,6 +195,9 @@ def _search_tickers(query: str, max_results: int = 5) -> list[dict]:
     """
     Search yfinance for tickers matching a company name or partial ticker.
     Returns list of {symbol, name, exchange} dicts. Empty list on any error.
+
+    Kept as a legacy helper — newer code paths prefer the EODHD-based
+    _smart_search() below for autocomplete.
     """
     if not query or len(query) < 2:
         return []
@@ -211,6 +216,151 @@ def _search_tickers(query: str, max_results: int = 5) -> list[dict]:
         return out[:max_results]
     except Exception:
         return []
+
+
+# ── EODHD search + smart NL detection ────────────────────────────────────────
+import requests as _rg_requests
+from config import EODHD_API_KEY as _RG_EODHD_KEY, REQUEST_HEADERS as _RG_HEADERS
+from data_sources.eodhd_adapter import _YF_TO_EODHD as _RG_YF_TO_EODHD
+_RG_EODHD_TO_YF = {v: k for k, v in _RG_YF_TO_EODHD.items()}
+_RG_EODHD_BASE  = "https://eodhistoricaldata.com/api"
+
+
+def _rg_eodhd_to_yf(code: str, exchange: str) -> str:
+    """EODHD (Code, Exchange) → Yahoo Finance ticker."""
+    code = (code or "").strip().upper()
+    exch = (exchange or "").strip().upper()
+    if not code:
+        return ""
+    if exch in ("", "US"):
+        return code
+    if exch == "INDX":
+        return "^" + code
+    if exch == "FOREX":
+        return code + "=X"
+    eodhd_suffix = f".{exch}"
+    yf_suffix = _RG_EODHD_TO_YF.get(eodhd_suffix, eodhd_suffix)
+    return f"{code}{yf_suffix}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _rg_eodhd_search(query: str) -> list[dict]:
+    if not _RG_EODHD_KEY or not query or len(query.strip()) < 1:
+        return []
+    try:
+        r = _rg_requests.get(
+            f"{_RG_EODHD_BASE}/search/{query.strip()}",
+            params={"api_token": _RG_EODHD_KEY, "fmt": "json", "limit": 15},
+            headers=_RG_HEADERS,
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+# Trigger words / patterns that suggest a natural-language prompt
+_NL_TRIGGERS = (
+    # English
+    "top ", "first ", "last ", "compare ", "screen ", "list ", "find ",
+    "show ", "filter ", "run ", "analyse", "analyze",
+    " by ", " from ", " with ", " in ", " for ",
+    # Lithuanian
+    "trauk", "rask", "rodyk", "palyginti", "palygink", "iš ", " pagal ",
+    " geriausi", " didžiausi", " pigiausi", " mažiausi",
+)
+
+
+def _looks_like_nl(q: str) -> bool:
+    """Heuristic — return True if the query looks like a natural-language prompt."""
+    if not q:
+        return False
+    q_low = q.lower()
+    word_count = len(q_low.split())
+    if word_count >= 4:
+        return True
+    if word_count >= 2 and any(tr in q_low for tr in _NL_TRIGGERS):
+        return True
+    # Mentions of an index name
+    if any(idx in q_low for idx in
+           ("s&p", "sp500", "nasdaq", "dow", "dax", "ftse",
+            "cac", "ibex", "nikkei", "hang seng", "stoxx")):
+        return True
+    return False
+
+
+def _smart_search(query: str) -> list[tuple[str, str]]:
+    """
+    Smart-search callback for st_searchbox:
+      • If query looks NL → return one "🔮 Run as prompt" option first.
+      • Always also return ticker autocomplete suggestions from EODHD /search.
+
+    Each returned tuple is (display_label, value_to_return). The value
+    becomes the searchbox's selection result.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    suggestions: list[tuple[str, str]] = []
+
+    if _looks_like_nl(q):
+        truncated = (q[:70] + "…") if len(q) > 70 else q
+        suggestions.append(
+            (f"🔮  Run as prompt: \"{truncated}\"", f"NL::{q}")
+        )
+
+    # Ticker autocomplete (also helpful even when query is NL — they may
+    # mention a real ticker that the EODHD search recognises).
+    seen: set[str] = set()
+    for item in _rg_eodhd_search(q):
+        if not isinstance(item, dict):
+            continue
+        code = item.get("Code", "")
+        exch = item.get("Exchange", "")
+        name = item.get("Name", "") or ""
+        ttype = (item.get("Type") or "").strip()
+        country = (item.get("Country") or "").strip()
+        if not code:
+            continue
+        yf_ticker = _rg_eodhd_to_yf(code, exch)
+        if not yf_ticker or yf_ticker in seen:
+            continue
+        seen.add(yf_ticker)
+        meta_bits = [b for b in (exch, country, ttype) if b]
+        meta = " · ".join(meta_bits)
+        label = f"{yf_ticker:<14}  {name[:48]}"
+        if meta:
+            label += f"  ({meta})"
+        suggestions.append((label, yf_ticker))
+
+    return suggestions[:12]
+
+
+# ── Add ticker to My Portfolio (from screener row) ───────────────────────────
+def _rg_add_to_portfolio(ticker: str) -> bool:
+    """
+    Persist a ticker into data/portfolio.json so it shows up in the
+    My Portfolio page. Returns True if added, False if it was already there.
+    """
+    from pathlib import Path as _P
+    pf = _P(__file__).resolve().parent.parent / "data" / "portfolio.json"
+    pf.parent.mkdir(exist_ok=True)
+    existing = []
+    if pf.exists():
+        try:
+            existing = list(json.loads(pf.read_text(encoding="utf-8")).get("tickers", []))
+        except Exception:
+            existing = []
+    if ticker in existing:
+        return False
+    existing.append(ticker)
+    pf.write_text(json.dumps({"tickers": existing}, indent=2),
+                  encoding="utf-8")
+    return True
 
 
 # ── Framework registry (loaded dynamically from frameworks/ directory) ────────
@@ -507,40 +657,182 @@ st.divider()
 col_left, col_right = st.columns([1.4, 1], gap="large")
 
 with col_left:
-    st.markdown("#### Ticker  *or describe what to analyse*")
-    ticker_input = st.text_input(
-        "Ticker or natural language query",
+    st.markdown("#### Ticker  *or describe what you want in plain language*")
+
+    # ── Smart searchbar (autocomplete + NL prompt) ────────────────────────────
+    selected = st_searchbox(
+        search_function=_smart_search,
         placeholder=(
-            "e.g.  NOKIA.HE  ·  ^OMXH25  ·  "
-            "'Run Gravity model for OMX Helsinki 25 constituents, no market cap constraint'"
+            "🔍 e.g.  AAPL  ·  Rheinmetall  ·  "
+            "'top 10 SP500 by market cap'  ·  'Fisher on RHM.DE'"
         ),
-        label_visibility="collapsed",
-        key="ticker_input",
-    ).strip()
-
-    # Live ticker suggestions — fires when the input looks like a single company name
-    _raw_input = st.session_state.get("ticker_input", "").strip()
-    _is_nl_query = " " in _raw_input and len(_raw_input) > 8
-    _looks_like_name = (
-        _raw_input
-        and len(_raw_input) > 4
-        and not _is_nl_query                          # exclude NL phrases
-        and _raw_input.replace(" ", "").isalpha()
-        and "." not in _raw_input
-        and not _raw_input.startswith("^")
+        label=None,
+        clear_on_submit=False,
+        key="rg_searchbox",
     )
-    if _looks_like_name:
-        _suggestions = _search_tickers(_raw_input, max_results=4)
-        if _suggestions:
-            st.caption("**Did you mean one of these?**")
-            for _s in _suggestions:
-                _lbl = f"`{_s['symbol']}`  {_s['name']}"
-                if _s['exchange']:
-                    _lbl += f"  ·  {_s['exchange']}"
-                st.caption(_lbl)
 
-    # Normalise for display-time checks (full upper only for plain tickers)
-    ticker_input = ticker_input.upper() if not _is_nl_query else ticker_input
+    # Persist the selected ticker (or the parsed intent / screener rows) in
+    # session state so the rest of the page can read it without rerunning
+    # the searchbox.
+    if "rg_active_ticker" not in st.session_state:
+        st.session_state.rg_active_ticker = ""
+    if "rg_intent" not in st.session_state:
+        st.session_state.rg_intent = None
+    if "rg_screener_rows" not in st.session_state:
+        st.session_state.rg_screener_rows = None
+    if "rg_nl_query" not in st.session_state:
+        st.session_state.rg_nl_query = ""
+
+    # Handle a fresh selection from the searchbox
+    if selected and selected != st.session_state.get("_rg_last_selected"):
+        st.session_state._rg_last_selected = selected
+        if selected.startswith("NL::"):
+            # ── Natural-language path ────────────────────────────────────────
+            nl_q = selected[4:].strip()
+            st.session_state.rg_nl_query = nl_q
+            with st.spinner("🔮 Interpreting your query with the LLM…"):
+                try:
+                    from models.nl_intent import parse_intent as _parse_nl
+                    intent = _parse_nl(nl_q)
+                except Exception as _e:
+                    intent = {}
+                    st.error(f"Intent parsing failed: {_e}")
+            st.session_state.rg_intent = intent
+
+            action = (intent or {}).get("action")
+            if action == "screen" and intent.get("universe"):
+                # Run the EODHD screener
+                with st.spinner(
+                    f"📊 Screening {intent['universe']} "
+                    f"by {intent.get('sort_by') or 'market_cap'} "
+                    f"({intent.get('sort_dir') or 'desc'})…  this can take ~1 min the first time"
+                ):
+                    try:
+                        from data_sources.screener_eodhd import screen_index
+                        rows = screen_index(
+                            intent["universe"],
+                            sort_by=intent.get("sort_by") or "market_cap",
+                            sort_dir=intent.get("sort_dir") or "desc",
+                            limit=intent.get("limit") or 10,
+                        )
+                    except Exception as _e:
+                        rows = []
+                        st.error(f"Screener failed: {_e}")
+                st.session_state.rg_screener_rows = rows
+                st.session_state.rg_active_ticker = ""   # no single ticker yet
+            elif action in ("report", "compare") and intent.get("tickers"):
+                # Pre-select the first ticker; if framework provided, set it too
+                st.session_state.rg_active_ticker = intent["tickers"][0]
+                st.session_state.rg_screener_rows = None
+                fid = intent.get("framework_id")
+                if fid:
+                    st.session_state["report_type"] = fid
+            else:
+                # Could not parse → show notes and treat as fallback ticker
+                st.warning(
+                    f"Couldn't fully interpret the prompt"
+                    + (f" — {intent.get('notes')}" if intent and intent.get("notes")
+                       else "") + ". Try a ticker or rephrase."
+                )
+                st.session_state.rg_active_ticker = ""
+                st.session_state.rg_screener_rows = None
+        else:
+            # ── Plain ticker pick ────────────────────────────────────────────
+            st.session_state.rg_active_ticker = selected.strip().upper()
+            st.session_state.rg_intent = None
+            st.session_state.rg_screener_rows = None
+
+    # Render screener result table inline (if any)
+    if st.session_state.get("rg_screener_rows"):
+        _intent_for_render = st.session_state.rg_intent or {}
+        _rows_for_render = st.session_state.rg_screener_rows
+        _universe = _intent_for_render.get("universe") or "—"
+        _sort_by  = _intent_for_render.get("sort_by") or "market_cap"
+        _sort_dir = _intent_for_render.get("sort_dir") or "desc"
+        st.markdown(
+            f"##### 🔍 {_universe} · top {len(_rows_for_render)} by "
+            f"**{_sort_by}** ({_sort_dir})"
+        )
+        if _intent_for_render.get("notes"):
+            st.caption(f"💡 {_intent_for_render['notes']}")
+
+        # Header
+        sh = st.columns([0.3, 1.0, 2.1, 1.3, 1.2, 1.0, 0.9, 0.9, 0.45, 0.45])
+        sh[0].markdown("<small style='color:#888;'>#</small>", unsafe_allow_html=True)
+        sh[1].markdown("<small style='color:#888;'>Ticker</small>", unsafe_allow_html=True)
+        sh[2].markdown("<small style='color:#888;'>Name</small>", unsafe_allow_html=True)
+        sh[3].markdown("<small style='color:#888;'>Sector</small>", unsafe_allow_html=True)
+        sh[4].markdown(f"<small style='color:#888;'><b>{_sort_by}</b></small>",
+                       unsafe_allow_html=True)
+        sh[5].markdown("<small style='color:#888;'>Price</small>", unsafe_allow_html=True)
+        sh[6].markdown("<small style='color:#888;'>P/E</small>", unsafe_allow_html=True)
+        sh[7].markdown("<small style='color:#888;'>ROE</small>", unsafe_allow_html=True)
+        sh[8].markdown("<small style='color:#888;'>&nbsp;</small>", unsafe_allow_html=True)
+        sh[9].markdown("<small style='color:#888;'>&nbsp;</small>", unsafe_allow_html=True)
+
+        def _fmt_sort_val(metric, v):
+            if v is None: return "—"
+            try:
+                v = float(v)
+            except Exception:
+                return "—"
+            if metric in ("market_cap", "revenue"):
+                if abs(v) >= 1e12: return f"{v/1e12:.2f}T"
+                if abs(v) >= 1e9:  return f"{v/1e9:.2f}B"
+                if abs(v) >= 1e6:  return f"{v/1e6:.2f}M"
+                return f"{v:,.0f}"
+            if metric in ("roe", "ebit_margin", "net_margin", "div_yield", "fcf_yield"):
+                return f"{v*100:.2f}%"
+            if metric in ("pe_ratio", "ev_ebit"):
+                return f"{v:.2f}×"
+            return f"{v:,.2f}"
+
+        for _row in _rows_for_render:
+            r = st.columns([0.3, 1.0, 2.1, 1.3, 1.2, 1.0, 0.9, 0.9, 0.45, 0.45])
+            r[0].markdown(f"<small>{_row.get('rank', '')}</small>",
+                          unsafe_allow_html=True)
+            r[1].markdown(f"**{_row['ticker']}**")
+            r[2].markdown(f"<small>{(_row.get('name') or '')[:34]}</small>",
+                          unsafe_allow_html=True)
+            r[3].markdown(f"<small style='color:#666;'>"
+                          f"{(_row.get('sector') or '')[:18]}</small>",
+                          unsafe_allow_html=True)
+            r[4].markdown(f"<b>{_fmt_sort_val(_sort_by, _row.get(_sort_by))}</b>",
+                          unsafe_allow_html=True)
+            _px = _row.get('price')
+            r[5].markdown(f"<small>{_px:,.2f}</small>" if _px else "—",
+                          unsafe_allow_html=True)
+            _pe = _row.get('pe_ratio')
+            r[6].markdown(f"<small>{_pe:.1f}×</small>" if _pe else "—",
+                          unsafe_allow_html=True)
+            _roe = _row.get('roe')
+            r[7].markdown(f"<small>{_roe*100:.1f}%</small>" if _roe is not None else "—",
+                          unsafe_allow_html=True)
+            with r[8]:
+                if st.button("📊", key=f"scr_use_{_row['ticker']}",
+                             help="Use this ticker — picks it for report generation"):
+                    st.session_state.rg_active_ticker = _row['ticker']
+                    st.session_state.rg_screener_rows = None
+                    st.rerun()
+            with r[9]:
+                if st.button("➕", key=f"scr_add_{_row['ticker']}",
+                             help="Add to My Portfolio"):
+                    added = _rg_add_to_portfolio(_row['ticker'])
+                    if added:
+                        st.toast(f"✅ Added {_row['ticker']} to portfolio",
+                                 icon="✅")
+                    else:
+                        st.toast(f"{_row['ticker']} already in portfolio",
+                                 icon="ℹ️")
+
+        st.markdown("<hr style='margin:6px 0;'>", unsafe_allow_html=True)
+
+    # Compute working ticker_input from session_state — drives all the
+    # existing form/dispatch logic below unchanged.
+    ticker_input = st.session_state.get("rg_active_ticker", "") or ""
+    _is_nl_query = False     # NL path now handled above; downstream form is
+                             # always single-ticker once we reach this point.
+    ticker_input = ticker_input.upper() if ticker_input else ""
 
     # ── Index / ETF detection ─────────────────────────────────────────────────
     # Quick heuristic: ^ prefix = definitely an index.
