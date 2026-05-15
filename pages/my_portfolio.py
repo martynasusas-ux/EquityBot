@@ -516,15 +516,54 @@ st.markdown(
       .pf-name    { font-weight: 600; color: #1B3F6E; }
       .pf-tk      { color: #888; font-size: 11px; }
       .pf-val     { font-size: 13px; color: #222; }
-      .pf-hdr     { color: #888; font-size: 11px; padding: 2px 0; }
+      .pf-hdr     { color: #888; font-size: 11px; padding: 2px 0;
+                    text-align: center; }
       .pf-earn    { color: #1B3F6E; font-size: 11px; }
       .pf-earn-na { color: #888; font-size: 11px; font-style: italic; }
-      /* Tighten Streamlit's column gutter even further so numeric
-         cells get more room and don't get cut off by ellipsis. */
-      div[data-testid="column"] { padding-left: 2px !important;
-                                  padding-right: 2px !important; }
-      /* Tighten button height in row */
-      .pf-row button { padding: 0px 6px !important; min-height: 28px !important; }
+
+      /* Tight gutter — pull all columns hard together. */
+      div[data-testid="column"] {
+        padding-left: 1px !important;
+        padding-right: 1px !important;
+      }
+
+      /* All buttons: rounded corners, centred symbol, subtle border, hover. */
+      div[data-testid="stButton"] > button {
+        border-radius: 8px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+        padding: 0 8px !important;
+        min-height: 30px !important;
+        line-height: 1 !important;
+      }
+
+      /* Action buttons in the last two columns of a row become small
+         rounded squares with a centred glyph. */
+      div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]:nth-last-child(-n+2)
+        > div[data-testid="stVerticalBlock"]
+        div[data-testid="stButton"] > button {
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+        padding: 0 !important;
+        border-radius: 8px !important;
+        border: 1px solid #C8D2DD !important;
+        background: #FFFFFF !important;
+        color: #1B3F6E !important;
+        font-size: 14px !important;
+        margin: 0 auto !important;
+      }
+      div[data-testid="stHorizontalBlock"]
+        > div[data-testid="column"]:nth-last-child(-n+2)
+        > div[data-testid="stVerticalBlock"]
+        div[data-testid="stButton"] > button:hover {
+        background: #EEF5FB !important;
+        border-color: #1B3F6E !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -539,11 +578,10 @@ if st.session_state.portfolio_tickers:
     h_cols = st.columns(_COL_W)
     labels = ["Name", "Ticker", "Earnings", "Price", "Mkt Cap",
               "P/E", "ROE", "EBIT M.", "YTD", "", ""]
-    align_right = {3, 4, 5, 6, 7, 8}   # numeric columns right-aligned
     for i, lab in enumerate(labels):
-        align = "right" if i in align_right else "left"
+        # All header labels centred (pf-hdr already has text-align:center).
         h_cols[i].markdown(
-            f"<div class='pf-hdr' style='text-align:{align};'>{lab}</div>",
+            f"<div class='pf-hdr'>{lab}</div>",
             unsafe_allow_html=True,
         )
     st.markdown("<hr style='margin:0 0 4px 0; border-color:#E0E5EC;'>",
@@ -575,13 +613,14 @@ else:
             unsafe_allow_html=True,
         )
 
-        # 1. Ticker symbol (small grey)
+        # 1. Ticker symbol (small grey, centred)
         cols[1].markdown(
-            f"<div class='pf-cell pf-tk'>{ticker}</div>",
+            f"<div class='pf-cell pf-tk' style='text-align:center;'>"
+            f"{ticker}</div>",
             unsafe_allow_html=True,
         )
 
-        # 2. Earnings date (or 'no date')
+        # 2. Earnings date (or 'no date'), centred
         if next_earnings:
             earn = f"📅 {next_earnings}"
             earn_cls = "pf-earn"
@@ -589,16 +628,17 @@ else:
             earn = "📅 no date"
             earn_cls = "pf-earn-na"
         cols[2].markdown(
-            f"<div class='pf-cell {earn_cls}'>{earn}</div>",
+            f"<div class='pf-cell {earn_cls}' style='text-align:center;'>"
+            f"{earn}</div>",
             unsafe_allow_html=True,
         )
 
-        # 3-7. Numeric metrics, right-aligned for easier scanning
+        # 3-7. Numeric metrics — centred to line up with centred headers.
         def _num_cell(text: str, color: str = "#222",
                       bold: bool = False) -> str:
             wt = "font-weight:600;" if bold else ""
             return (f"<div class='pf-cell pf-val' "
-                    f"style='text-align:right;color:{color};{wt}'>"
+                    f"style='text-align:center;color:{color};{wt}'>"
                     f"{text}</div>")
 
         cols[3].markdown(_num_cell(_fmt_price(snap['price'], snap['currency'])),
