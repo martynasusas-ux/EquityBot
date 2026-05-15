@@ -90,45 +90,69 @@ def _px(v, ccy: str = "") -> str:
     except Exception: return "—"
 
 
-# ── Heat-map row flowable ────────────────────────────────────────────────────
+# ── Score badge (single coloured cell with the total + grade) ────────────────
 
-def _build_heatmap_table(scores: list[int]) -> Table:
+# Total-score → colour band. Matches the Fisher grading bands used in
+# _validate_analysis: A=65+, B=55-64, C=45-54, D=35-44, F<35.
+_SCORE_BANDS = [
+    (65, HexColor("#1A7E3D")),   # A — dark green
+    (55, HexColor("#52BE80")),   # B — light green
+    (45, HexColor("#F1C40F")),   # C — yellow
+    (35, HexColor("#E67E22")),   # D — orange
+    (0,  HexColor("#C0392B")),   # F — dark red
+]
+
+
+def _score_band_color(total: int | float) -> HexColor:
+    try:
+        t = int(total)
+    except Exception:
+        return _SCORE_BANDS[-1][1]
+    for threshold, colour in _SCORE_BANDS:
+        if t >= threshold:
+            return colour
+    return _SCORE_BANDS[-1][1]
+
+
+def _build_score_badge(total: int | float, grade: str = "") -> Table:
     """
-    A horizontal strip of 15 small coloured cells. Each cell shows its
-    score number in white so the value is readable on every colour.
+    A single coloured cell displaying the peer's total Fisher score
+    (e.g. "62  B"). Replaces the previous 15-cell heat-map strip so
+    the column carries just the headline number.
     """
-    cells = [str(s if s is not None else "—") for s in (scores or [3] * 15)]
-    # Single-row table; ReportLab needs a list of lists
-    rows = [cells]
-    col_w = (CW * 0.30) / 15   # heat-map column ≈ 30% of table width
-    t = Table(rows, colWidths=[col_w] * 15, rowHeights=[10])
-    style = [
-        ("FONTNAME",   (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 6.5),
-        ("TEXTCOLOR",  (0, 0), (-1, -1), white),
-        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING",   (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
-    ]
-    for i, s in enumerate(scores or [3] * 15):
-        style.append(("BACKGROUND", (i, 0), (i, 0), _heat_color(s)))
-    t.setStyle(TableStyle(style))
+    try:
+        total_int = int(total)
+    except Exception:
+        total_int = 0
+    label = f"{total_int} / 75"
+    if grade:
+        label += f"   {grade}"
+    t = Table([[label]], colWidths=[CW * 0.13], rowHeights=[14])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, 0), _score_band_color(total_int)),
+        ("TEXTCOLOR",     (0, 0), (0, 0), white),
+        ("FONTNAME",      (0, 0), (0, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (0, 0), 8.5),
+        ("ALIGN",         (0, 0), (0, 0), "CENTER"),
+        ("VALIGN",        (0, 0), (0, 0), "MIDDLE"),
+        ("LEFTPADDING",   (0, 0), (0, 0), 2),
+        ("RIGHTPADDING",  (0, 0), (0, 0), 2),
+        ("TOPPADDING",    (0, 0), (0, 0), 0),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 0),
+    ]))
     return t
 
 
 # ── Peer comparison table ────────────────────────────────────────────────────
 
-_PEER_COLS = ("Company", "Tk", "Heat (15)", "Price", "MCap",
-              "P/E", "EV/EBIT", "EV/Sales", "Gearing", "Total")
+_PEER_COLS = ("Company", "Ticker", "Fisher Score", "Price", "MCap",
+              "P/E", "EV/EBIT", "EV/Sales", "Gearing")
 
-# Column widths (must sum to CW). Heat column dominates because it carries
-# the most information per pixel.
+# Column widths (must sum to 1.0). Fisher Score is a coloured badge so
+# it doesn't need much horizontal room.
 _PEER_WIDTHS = [
-    0.20, 0.08, 0.30, 0.08, 0.08,
-    0.05, 0.06, 0.06, 0.05, 0.04,
+    0.24, 0.10, 0.13, 0.11, 0.11,
+    0.08, 0.08, 0.08, 0.07,
 ]
 
 
@@ -138,14 +162,15 @@ def _peer_data_row(idx: int, subject: bool, peer_dict: dict,
     name = peer_dict.get("name") or (cd.name if cd else "") or peer_dict.get("ticker", "")
     name = (name[:22] + "…") if len(name) > 23 else name
     ticker = peer_dict.get("ticker") or (cd.ticker if cd else "")
-    heat = _build_heatmap_table(peer_dict.get("fisher_scores") or [3] * 15)
+    total = peer_dict.get("total_score", 0)
+    grade = peer_dict.get("grade", "")
+    score_badge = _build_score_badge(total, grade)
     price    = _px(cd.current_price, cur) if cd else "—"
     mcap     = _b(cd.market_cap) + (f" {cur}" if cd and cur else "") if cd else "—"
     pe       = _x(cd.pe_ratio) if cd else "—"
     ev_ebit  = _x(cd.ev_ebit) if cd else "—"
     ev_sales = _x(cd.ev_sales) if cd else "—"
     gearing  = _x(cd.gearing) if cd else "—"
-    total    = str(peer_dict.get("total_score", "—"))
 
     # Bold-up the subject row so reader doesn't lose it in the table
     name_para = Paragraph(
@@ -155,14 +180,13 @@ def _peer_data_row(idx: int, subject: bool, peer_dict: dict,
     return [
         name_para,
         Paragraph(ticker, styles["peer_cell_mono"]),
-        heat,
+        score_badge,
         Paragraph(price, styles["peer_cell_num"]),
         Paragraph(mcap, styles["peer_cell_num"]),
         Paragraph(pe, styles["peer_cell_num"]),
         Paragraph(ev_ebit, styles["peer_cell_num"]),
         Paragraph(ev_sales, styles["peer_cell_num"]),
         Paragraph(gearing, styles["peer_cell_num"]),
-        Paragraph(f"<b>{total}</b>", styles["peer_cell_num"]),
     ]
 
 
@@ -233,20 +257,26 @@ def _peer_comparison_table(
 # ── Heat-map legend (small) ──────────────────────────────────────────────────
 
 def _heat_legend(styles: dict) -> Table:
-    """Tiny legend strip explaining the score-1-5 colours."""
-    legend_cells = [
-        [Paragraph("Fisher score legend:", styles["peer_legend_label"]),
-         Paragraph("1", styles["peer_cell_legend"]),
-         Paragraph("2", styles["peer_cell_legend"]),
-         Paragraph("3", styles["peer_cell_legend"]),
-         Paragraph("4", styles["peer_cell_legend"]),
-         Paragraph("5", styles["peer_cell_legend"]),
-         Paragraph("(1 = poor, 5 = exceptional)",
-                   styles["peer_legend_label"])],
+    """Score-band legend. Maps grade letter ↔ colour ↔ total range."""
+    grade_cells = [
+        ("A", "65+",     _SCORE_BANDS[0][1]),   # dark green
+        ("B", "55-64",   _SCORE_BANDS[1][1]),   # light green
+        ("C", "45-54",   _SCORE_BANDS[2][1]),   # yellow
+        ("D", "35-44",   _SCORE_BANDS[3][1]),   # orange
+        ("F", "< 35",    _SCORE_BANDS[4][1]),   # red
     ]
-    t = Table(legend_cells,
-              colWidths=[CW * 0.20, 14, 14, 14, 14, 14, CW * 0.55],
-              rowHeights=[12])
+    cells_row: list = [
+        Paragraph("Fisher score band:", styles["peer_legend_label"]),
+    ]
+    for letter, _r, _c in grade_cells:
+        cells_row.append(Paragraph(letter, styles["peer_cell_legend"]))
+    cells_row.append(Paragraph(
+        "A = 65+ · B = 55-64 · C = 45-54 · D = 35-44 · F < 35",
+        styles["peer_legend_label"],
+    ))
+
+    col_widths = [CW * 0.18] + [16] * 5 + [CW * 0.55]
+    t = Table([cells_row], colWidths=col_widths, rowHeights=[12])
     style = [
         ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
         ("FONTSIZE",     (0, 0), (-1, -1), 7),
@@ -258,8 +288,8 @@ def _heat_legend(styles: dict) -> Table:
         ("TOPPADDING",   (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
     ]
-    for i in range(1, 6):
-        style.append(("BACKGROUND", (i, 0), (i, 0), _heat_color(i)))
+    for i, (_letter, _rng, colour) in enumerate(grade_cells, start=1):
+        style.append(("BACKGROUND", (i, 0), (i, 0), colour))
     t.setStyle(TableStyle(style))
     return t
 
