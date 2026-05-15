@@ -233,7 +233,8 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary", "eodhd_sheet", "eodhd_fundamentals"}
+_BUILTIN_IDS = {"overview", "fisher", "gravity", "kepler_summary",
+                "eodhd_sheet", "eodhd_fundamentals", "eodhd_full"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -1064,6 +1065,32 @@ if generate_clicked and ticker_input:
                 analysis = {}
                 extra = {}
 
+            elif report_type == "eodhd_full":
+                # ── EODHD All-In-One full data dump ────────────────────────────
+                # Standalone fetcher; NO other data sources. Fetches every
+                # EODHD endpoint live and renders a 10-13 page PDF.
+                _prog.progress(30, text="🗂️  Fetching all EODHD endpoints…")
+                st.write("🗂️  Fetching all EODHD endpoints…")
+                import importlib, agents.pdf_eodhd_full as _efullmod
+                import data_sources.eodhd_all_in_one as _eaiomod
+                importlib.reload(_eaiomod)
+                importlib.reload(_efullmod)
+                from data_sources.eodhd_all_in_one import EODHDAllInOneFetcher
+                from agents.pdf_eodhd_full import EODHDFullGenerator
+                bundle = EODHDAllInOneFetcher().fetch_all(ticker_input)
+                _prog.progress(75, text=f"✓  {bundle['endpoints_used']}/9 endpoints OK")
+                st.write(f"✓  {bundle['endpoints_used']}/9 endpoints OK"
+                         + (f" — missing: {', '.join(bundle['errors'])}" if bundle['errors'] else ""))
+                _prog.progress(85, text="📄  Rendering EODHD Full PDF…")
+                st.write("📄  Rendering EODHD Full PDF…")
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_eodhd_full_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                EODHDFullGenerator().render(bundle, pdf_path)
+                analysis = {}
+                extra = {}
+
             elif report_type == "eodhd_fundamentals":
                 # ── EODHD Fundamentals Data From API ──────────────────────────
                 # No LLM call — 4-page analysis: profile, P&L, BS/CF, scorecard.
@@ -1167,7 +1194,7 @@ if generate_clicked and ticker_input:
             if adv_result is not None:
                 _usage_claude = adv_result.claude_usage
                 _usage_openai = adv_result.openai_usage
-            elif report_type in ("kepler_summary", "eodhd_sheet", "eodhd_fundamentals"):
+            elif report_type in ("kepler_summary", "eodhd_sheet", "eodhd_fundamentals", "eodhd_full"):
                 _usage_claude = {}
                 _usage_openai = None
             else:
