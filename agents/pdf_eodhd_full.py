@@ -244,7 +244,12 @@ def _kv_grid(rows: list[tuple], col_w: float, styles: dict) -> Table:
 
 def _data_table(rows: list[list], col_widths: list[float],
                 styles: dict, with_header: bool = True) -> Table:
-    """Standard ink-saving data table: white bg, navy underline below header."""
+    """Standard ink-saving data table: white bg, navy underline below header.
+
+    Side-padding is intentionally tiny (1.5pt vs ReportLab's default 6pt)
+    so wide numeric values like "46,660,000" fit in the narrow per-year
+    columns used by the 10-year financial statements without wrapping.
+    """
     t = Table(rows, colWidths=col_widths)
     ts = [
         ("FONTNAME", (0, 0), (-1, -1), BASE_FONT),
@@ -252,6 +257,8 @@ def _data_table(rows: list[list], col_widths: list[float],
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 1.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1.5),
         ("BACKGROUND", (0, 0), (-1, -1), white),
         ("LINEBELOW", (0, 1), (-1, -2), 0.25, BORDER),
     ]
@@ -499,7 +506,12 @@ def _financials_section(
         return el
 
     n_cols = len(years)
-    label_w = 130 if n_cols <= 8 else 110
+    # Tighter label column when there are many years so every numeric
+    # cell has room for full raw values like "46,660,000" without
+    # wrapping onto a second line.
+    if   n_cols <= 6:  label_w = 130
+    elif n_cols <= 8:  label_w = 105
+    else:              label_w = 80     # 9-10 cols: shrink hard
     data_w = (CW - label_w) / n_cols
     col_widths = [label_w] + [data_w] * n_cols
 
@@ -586,9 +598,7 @@ def _page_balance_sheet(bundle: dict, styles: dict) -> list:
         ("totalStockholderEquity",     "Stockholder Equity", _m),
         ("retainedEarnings",           "Retained Earnings", _m),
         ("commonStock",                "Common Stock (par)", _m),
-        # Display in millions for column-width consistency with the rest
-        # of the Balance Sheet (the section header already says "millions").
-        ("commonStockSharesOutstanding","Shares Outstanding (M)", _m),
+        ("commonStockSharesOutstanding","Shares Outstanding", _f0),
         ("netTangibleAssets",          "Net Tangible Assets", _m),
         ("netWorkingCapital",          "Net Working Capital", _m),
         ("netInvestedCapital",         "Net Invested Capital", _m),
