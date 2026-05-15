@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Any
 
+import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
@@ -553,24 +554,66 @@ else:
                 if sel_period != current_period:
                     st.session_state.portfolio_periods[ticker] = sel_period
 
-                # Chart
+                # Chart — use Altair so the Y axis fits the price range
+                # (st.line_chart anchors Y at 0, which makes intraday charts
+                # look like a flat line).
                 hist = _fetch_history(ticker, sel_period)
                 if hist is None or hist.empty:
                     st.warning(f"No EODHD price history available for **{sel_period}**.")
                 else:
-                    st.line_chart(hist, height=280, use_container_width=True)
                     try:
-                        first_px = float(hist["Close"].iloc[0])
-                        last_px  = float(hist["Close"].iloc[-1])
+                        df_chart = hist.reset_index()
+                        time_col = df_chart.columns[0]   # "Date" or "Time"
+                        low_p  = float(df_chart["Close"].min())
+                        high_p = float(df_chart["Close"].max())
+                        # Add a small padding around the range so the line
+                        # doesn't hug the chart edges.
+                        span = max(high_p - low_p, abs(low_p) * 0.001)
+                        pad  = span * 0.08
+                        y_min = low_p - pad
+                        y_max = high_p + pad
+
+                        # Line colour: green if last >= first, red otherwise
+                        first_px = float(df_chart["Close"].iloc[0])
+                        last_px  = float(df_chart["Close"].iloc[-1])
+                        line_color = "#1A7E3D" if last_px >= first_px else "#B83227"
+
+                        x_type = "T"   # temporal works for both Date + Time
+                        chart = (
+                            alt.Chart(df_chart)
+                               .mark_line(strokeWidth=2)
+                               .encode(
+                                   x=alt.X(f"{time_col}:{x_type}", title=""),
+                                   y=alt.Y(
+                                       "Close:Q",
+                                       title="",
+                                       scale=alt.Scale(
+                                           domain=[y_min, y_max],
+                                           zero=False,
+                                           nice=False,
+                                       ),
+                                   ),
+                                   tooltip=[
+                                       alt.Tooltip(f"{time_col}:{x_type}",
+                                                   title="Time"),
+                                       alt.Tooltip("Close:Q",
+                                                   title="Price",
+                                                   format=",.2f"),
+                                   ],
+                                   color=alt.value(line_color),
+                               )
+                               .properties(height=280)
+                               .configure_view(strokeWidth=0)
+                        )
+                        st.altair_chart(chart, use_container_width=True)
+
                         chg_pct  = (last_px / first_px - 1) * 100 if first_px else 0
-                        low_p    = float(hist["Close"].min())
-                        high_p   = float(hist["Close"].max())
                         sc1, sc2, sc3 = st.columns(3)
                         sc1.caption(f"**{sel_period} change:** {chg_pct:+.1f}%")
                         sc2.caption(f"**{sel_period} low:** {low_p:,.2f}")
                         sc3.caption(f"**{sel_period} high:** {high_p:,.2f}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        st.warning(f"Chart rendering failed: {e}")
 
                 # News
                 with st.expander("📰 Latest news", expanded=False):
