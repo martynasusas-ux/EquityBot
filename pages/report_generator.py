@@ -680,9 +680,24 @@ with st.sidebar:
 
 
 # ── Main area ─────────────────────────────────────────────────────────────────
+# CSS: lift our compact title above Streamlit's stAppToolbar so the
+# toolbar doesn't cover the heading. The toolbar uses z-index ≈ 999999,
+# so we go one higher. position:relative is required for z-index to take
+# effect on a flow-positioned element.
 st.markdown(
-    "<div style='display:flex;align-items:center;gap:8px;"
-    "margin:0 0 6px 0;'>"
+    "<style>"
+    ".eq-page-title {"
+    "  position: relative;"
+    "  z-index: 1000001;"
+    "  background: #FFFFFF;"
+    "  padding: 4px 0 6px 0;"
+    "}"
+    "</style>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div class='eq-page-title' "
+    "style='display:flex;align-items:center;gap:8px;margin:0;'>"
     "<span style='font-size:20px;'>📊</span>"
     "<span style='font-size:16px;font-weight:600;color:#1B3F6E;'>"
     "Report Generator</span></div>",
