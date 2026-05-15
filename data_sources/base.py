@@ -134,7 +134,12 @@ class AnnualFinancials:
         # not millions — divide by 1e6 to get the same millions unit as net_income.
         if self.net_income_underlying is None and self.eps_diluted is not None and self.shares_outstanding is not None:
             if self.shares_outstanding > 0:
-                shares_m = self.shares_outstanding / 1_000_000 if self.shares_outstanding > 1_000 else self.shares_outstanding
+                # shares_outstanding is normally stored in millions. Defensive
+                # check: if the value is suspiciously huge (> 1M), it must be
+                # raw units left over from legacy cache.
+                shares_m = (self.shares_outstanding / 1_000_000
+                            if self.shares_outstanding > 1_000_000
+                            else self.shares_outstanding)
                 self.net_income_underlying = self.eps_diluted * shares_m
 
         # ROE — prefer underlying NI (analyst-comparable) over IFRS NI

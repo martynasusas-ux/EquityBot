@@ -551,9 +551,11 @@ def _page2(company: CompanyData, styles: dict) -> list:
 
     # ── Shares outstanding ────────────────────────────────────────────────────
     el.append(_sec("Shares Outstanding  (millions)", styles))
+    # shares_outstanding is normalized to millions by DataManager; defensive
+    # fallback divides only if a legacy raw value (>1M) leaks through.
     shares_vals = [
         _n(_get(y, "shares_outstanding") / 1e6
-           if _get(y, "shares_outstanding") and _get(y, "shares_outstanding") > 1000
+           if _get(y, "shares_outstanding") and _get(y, "shares_outstanding") > 1_000_000
            else _get(y, "shares_outstanding"), 2)
         for y in hist
     ]
@@ -667,8 +669,9 @@ def _page3(company: CompanyData, styles: dict) -> list:
     for y in hist:
         af = company.annual_financials.get(y)
         if af and af.dividends_per_share is not None and af.shares_outstanding is not None:
+            # shares_outstanding is normalized to millions by DataManager
             shares_m = (af.shares_outstanding / 1e6
-                        if af.shares_outstanding > 1000
+                        if af.shares_outstanding > 1_000_000
                         else af.shares_outstanding)
             div_vals.append(_m(af.dividends_per_share * shares_m))
         else:

@@ -316,9 +316,11 @@ def _build_financial_table(company: CompanyData, styles: dict) -> Table:
 
     # Market cap (historical) + shares outstanding
     add_row("Mkt Cap (M)",     lambda a: a.market_cap,  "M")
+    # shares_outstanding is normalized to millions by DataManager; defensive
+    # fallback divides only if a legacy raw value (>1M) leaks through.
     add_row("Shares Out. (M)", lambda a: (
         a.shares_outstanding / 1_000_000
-        if a.shares_outstanding and a.shares_outstanding > 1_000
+        if a.shares_outstanding and a.shares_outstanding > 1_000_000
         else a.shares_outstanding
     ), "ps")
 

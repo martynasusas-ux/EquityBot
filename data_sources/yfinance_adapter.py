@@ -280,10 +280,10 @@ class YFinanceAdapter:
                         # last available monthly close for that calendar year
                         af.price_year_end = float(year_prices["Close"].iloc[-1])
 
-                        # shares this year (stored as raw count by _parse_annual_history)
-                        # → convert to millions for market-cap calculation
+                        # shares this year are already stored in millions
+                        # (matches the convention used by EODHD).
                         if af.shares_outstanding is not None and af.shares_outstanding > 0:
-                            shares_m = af.shares_outstanding / 1_000_000
+                            shares_m = af.shares_outstanding
                         elif current_shares_m is not None and current_shares_m > 0:
                             shares_m = current_shares_m
                         else:
@@ -525,9 +525,12 @@ class YFinanceAdapter:
                     if val is not None:
                         af.cash = val
                         break
+                # Store shares in MILLIONS to match EODHD convention. _df_val
+                # already divided by 1M, so no further conversion needed. This
+                # ensures derived calculations like total_equity / shares (both
+                # in millions → result is per-share value in reporting currency)
+                # work uniformly across all data sources.
                 af.shares_outstanding = _df_val(balance, "Ordinary Shares Number", idx)
-                if af.shares_outstanding is not None:
-                    af.shares_outstanding = af.shares_outstanding * 1_000_000  # undo /1M
 
             # Cash flow (annual, only if not already overridden by quarterly sum above)
             if cashflow is not None and not cashflow.empty and col in cashflow.columns:

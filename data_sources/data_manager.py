@@ -371,18 +371,25 @@ class DataManager:
                     f"{filled}/{len(missing_pye_years)} years"
                 )
 
+        # ── Normalize shares_outstanding units across all rows ────────────────
+        # Some legacy cached payloads (and a previous yfinance code path)
+        # stored per-year shares in raw units (e.g. 46,540,000) while EODHD
+        # and the current code path use millions (46.54). Force everything
+        # to millions so display sites and derived calculations like
+        # total_equity / shares_outstanding produce sensible numbers.
+        # Threshold > 1,000,000: no real company has > 1M million shares
+        # (that would be a trillion shares), so anything that large is raw.
+        for af in company.annual_financials.values():
+            if af.shares_outstanding is not None and af.shares_outstanding > 1_000_000:
+                af.shares_outstanding = af.shares_outstanding / 1_000_000
+
         # ── Final derived calculations ─────────────────────────────────────────
         company.calculate_current_ratios()
         for af in company.annual_financials.values():
-            # Derived ratios depend on price_year_end + shares_outstanding.
-            # Recompute market_cap as well now that both may be available.
+            # Both shares_outstanding and total_equity are in millions now,
+            # so deriving per-share book value, market_cap etc. is uniform.
             if af.market_cap is None and af.price_year_end and af.shares_outstanding:
-                shares_m = (
-                    af.shares_outstanding / 1_000_000
-                    if af.shares_outstanding > 1_000
-                    else af.shares_outstanding
-                )
-                af.market_cap = af.price_year_end * shares_m
+                af.market_cap = af.price_year_end * af.shares_outstanding
             af.calculate_derived()
 
         # ── Fill scalar margins from latest annual data — only when EODHD didn't ──
