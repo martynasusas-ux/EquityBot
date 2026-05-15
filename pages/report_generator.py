@@ -418,7 +418,8 @@ REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
 _BUILTIN_IDS = {"fisher", "fisher_peers", "gravity", "kepler_summary",
-                "eodhd_full", "overview_v2", "index_overview"}
+                "eodhd_full", "overview_v2", "index_overview",
+                "industry_analysis"}
 
 EXCHANGE_HINTS = {
     "Amsterdam (AEX)":   ".AS  e.g. WKL.AS, ASML.AS",
@@ -1040,7 +1041,8 @@ with col_right:
         placeholder="REL.L  TRI.TO  MSFT  (space-separated, up to 6)",
         label_visibility="collapsed",
         disabled=(report_type not in (
-            "overview_v2", "fisher", "fisher_peers", "gravity"
+            "overview_v2", "fisher", "fisher_peers", "gravity",
+            "industry_analysis",
         )),
         key="peers_input",
     )
@@ -1775,6 +1777,139 @@ if generate_clicked and ticker_input:
                     "peer_count": len(peer_analyses),
                 }
 
+            elif report_type == "industry_analysis":
+                # ── Industry Analysis — Porter 5 Forces + Competitive Advantage
+                from data_sources.eodhd_only_builder import (
+                    fetch_company_data_eodhd_only, fetch_peers_eodhd_only,
+                )
+                from data_sources.eodhd_macro import fetch_country_macro_block
+                from models.industry_analysis import (
+                    _industry_prompt_parts, _validate_analysis,
+                    SYSTEM_PROMPT as IA_SYS,
+                )
+
+                # Step 1: EODHD-only subject data
+                _prog.progress(15, text="🏛️  Fetching EODHD-only data for industry analysis…")
+                st.write("🏛️  Fetching EODHD bundle (10y financials + news + sentiment)…")
+                company, _ia_bundle = fetch_company_data_eodhd_only(ticker_input)
+                st.write(f"✓  EODHD endpoints used: {_ia_bundle.get('endpoints_used',0)}/9")
+
+                # Step 2: Peers — auto-suggest if user didn't provide any
+                ia_peers: dict = {}
+                _ia_suggest_usage: dict = {}
+                if peer_list:
+                    _ia_peer_tickers = [
+                        p.strip().upper() for p in peer_list if p.strip()
+                    ][:6]
+                else:
+                    _prog.progress(25, text="🤝  Asking LLM to suggest industry peers…")
+                    st.write("🤝  No peers supplied — asking LLM for peer suggestions…")
+                    try:
+                        from models.fisher_peers import suggest_peers as _suggest_peers
+                        _ia_peer_tickers, _ia_suggest_usage = _suggest_peers(
+                            company, max_peers=6,
+                        )
+                    except Exception as _se:
+                        _ia_peer_tickers = []
+                        st.warning(f"Peer suggestion failed: {_se}")
+                    if _ia_suggest_usage:
+                        _show_token_usage(_ia_suggest_usage)
+                    if _ia_peer_tickers:
+                        st.write(
+                            f"💡  LLM suggested peers: "
+                            f"{', '.join(_ia_peer_tickers)}"
+                        )
+
+                if _ia_peer_tickers:
+                    _prog.progress(40, text="🔍  Fetching EODHD peer data…")
+                    ia_peers = fetch_peers_eodhd_only(_ia_peer_tickers)
+                    st.write(f"✓  {len(ia_peers)} peer(s) loaded: "
+                             f"{', '.join(ia_peers.keys()) or 'none'}")
+
+                # Step 3: Country macro
+                _prog.progress(50, text="🌍  Fetching country macro from EODHD…")
+                ia_country_macro = fetch_country_macro_block(company.country)
+
+                # Step 4: Main LLM call — long-form Porter analysis
+                cacheable_pfx, dynamic_prompt = _industry_prompt_parts(
+                    company,
+                    bundle=_ia_bundle,
+                    peers=ia_peers,
+                    country_macro_block=ia_country_macro,
+                )
+
+                _prog.progress(60, text="🧠  Running Porter 5 Forces analysis (long form)…")
+                st.write("🧠  Running Porter 5 Forces + Competitive Advantage "
+                         "analysis (4,000–5,000 words; typically 60-120 s)…")
+
+                if adversarial_on:
+                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
+                    adv_result = _adv_engine.run(
+                        full_prompt, IA_SYS, max_tokens=12000,
+                        report_type="overview",  # adversarial reuses overview merger
+                    )
+                    analysis = _validate_analysis(adv_result.merged)
+                    st.write(
+                        f"✓  Industry: **{analysis.get('industry_attractiveness')}** · "
+                        f"Trajectory: **{analysis.get('trajectory')}** · "
+                        f"Advantage: **{analysis.get('competitive_advantage_size')}**"
+                    )
+                else:
+                    analysis = llm.generate_json(
+                        dynamic_prompt, IA_SYS, max_tokens=12000,
+                        cacheable_prefix=cacheable_pfx,
+                    )
+                    analysis = _validate_analysis(analysis)
+                    st.write(
+                        f"✓  Industry: **{analysis.get('industry_attractiveness')}** · "
+                        f"Trajectory: **{analysis.get('trajectory')}** · "
+                        f"Advantage: **{analysis.get('competitive_advantage_size')}**"
+                    )
+                    _show_token_usage(llm.last_usage)
+
+                # Combine peer-suggestion usage into the main usage for the
+                # cost block (only in non-adversarial path — adversarial
+                # tracks its own).
+                if not adversarial_on:
+                    _ia_main_usage = dict(llm.last_usage or {})
+                    if _ia_suggest_usage:
+                        for _k, _v in _ia_suggest_usage.items():
+                            _ia_main_usage[_k] = (
+                                (_ia_main_usage.get(_k) or 0) + (_v or 0)
+                            )
+                    try:
+                        llm.last_usage = _ia_main_usage
+                    except Exception:
+                        pass
+
+                _prog.progress(90, text="📄  Rendering Industry Analysis PDF…")
+                st.write("📄  Rendering Industry Analysis PDF…")
+                import importlib, agents.pdf_industry_analysis as _iamod
+                importlib.reload(_iamod)
+                from agents.pdf_industry_analysis import IndustryAnalysisPDFGenerator
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_industry_analysis_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                IndustryAnalysisPDFGenerator().render(
+                    company, analysis, pdf_path, adv_result=adv_result,
+                )
+                # We set rec field to a sensible mapping so the results
+                # viewer doesn't show "n/a" for the recommendation chip.
+                _ia_rec_map = {
+                    "Very Attractive": "BUY",  "Attractive":   "BUY",
+                    "Neutral":         "HOLD",
+                    "Unattractive":    "SELL", "Very Unattractive": "SELL",
+                }
+                analysis["recommendation"] = _ia_rec_map.get(
+                    analysis.get("industry_attractiveness", "Neutral"), "HOLD",
+                )
+                extra = {
+                    "attractiveness": analysis.get("industry_attractiveness"),
+                    "trajectory":     analysis.get("trajectory"),
+                    "advantage":      analysis.get("competitive_advantage_size"),
+                }
+
             elif report_type == "kepler_summary":
                 # ── Kepler-style analyst summary sheet (no LLM — pure data) ──
                 analysis = {}   # no LLM call; all content comes from CompanyData
@@ -2060,6 +2195,12 @@ if st.session_state.report_result:
                 f"Grade: **{extra.get('grade','?')}**  ·  "
                 f"Moat: {res['analysis'].get('moat_width','?')}  ·  "
                 f"Peers analysed: **{extra.get('peer_count', 0)}**"
+            )
+        elif rtype == "industry_analysis":
+            st.caption(
+                f"Industry attractiveness: **{extra.get('attractiveness','?')}**  ·  "
+                f"Trajectory: **{extra.get('trajectory','?')}**  ·  "
+                f"Competitive advantage: **{extra.get('advantage','?')}**"
             )
         elif rtype == "gravity":
             rm = res["analysis"].get("revenue_model", {})
