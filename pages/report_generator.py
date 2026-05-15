@@ -1080,6 +1080,11 @@ if _bulk:
                           f"({len(_b_tickers)} companies)",
                     state="complete", expanded=False,
                 )
+                # Capture LLM usage so the Result viewer can render the
+                # cost block. Universe screens use Claude under the hood
+                # (no OpenAI adversarial path) — so usage_openai stays None.
+                _b_usage = getattr(_screener, "last_usage", {}) or {}
+                _show_token_usage(_b_usage)
                 st.session_state.report_result = {
                     "pdf_path":    _html_path,
                     "company":     None,
@@ -1089,6 +1094,8 @@ if _bulk:
                     "rec":         "n/a",
                     "extra":       {"html_content": _html_content},
                     "adversarial": None,
+                    "usage_claude": _b_usage,
+                    "usage_openai": None,
                 }
                 _bulk_label_chip = f"{_b_label} · {_b_fw_short} · {_date}"
                 st.session_state.recent_reports.append({
@@ -1256,6 +1263,9 @@ if generate_clicked and ticker_input:
                     label=f"✅  {rt['short']} Universe Screen complete for {ticker_input}",
                     state="complete", expanded=False,
                 )
+                # Capture LLM usage for the cost block
+                _uni_usage = getattr(screener, "last_usage", {}) or {}
+                _show_token_usage(_uni_usage)
                 st.session_state.report_result = {
                     "pdf_path":    html_path,
                     "company":     None,
@@ -1265,6 +1275,8 @@ if generate_clicked and ticker_input:
                     "rec":         "n/a",
                     "extra":       {"html_content": _html_content},
                     "adversarial": None,
+                    "usage_claude": _uni_usage,
+                    "usage_openai": None,
                 }
                 label = f"{ticker_input} · {rt['short']} Screen · {date}"
                 st.session_state.recent_reports.append({

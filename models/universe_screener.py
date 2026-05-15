@@ -62,6 +62,10 @@ class UniverseScreener:
         from data_sources.data_manager import DataManager
         from framework_manager import FrameworkManager
 
+        # Initialise the usage attribute so callers can always read it
+        # safely even if the LLM call never happens (e.g. <3 companies loaded).
+        self.last_usage: dict = {}
+
         def _prog(pct: int, msg: str) -> None:
             if progress_cb:
                 progress_cb(pct, msg)
@@ -126,6 +130,10 @@ class UniverseScreener:
         # ── Call Claude ────────────────────────────────────────────────────────
         _prog(60, f"Running {fw.name} analysis across {loaded} companies — typically 60–120 s…")
         raw, usage = _call_claude(fw.system_prompt, prompt)
+        # Expose the usage dict to callers so the UI can render the cost block.
+        # `_call_claude` uses the same shape as Anthropic's API response, so it
+        # plugs straight into _claude_cost / _cost_block in report_generator.
+        self.last_usage = usage
         cache_hit = usage.get("cache_read_input_tokens", 0)
         if cache_hit:
             _prog(88, f"Analysis complete (cache hit: {cache_hit:,} tokens saved) — rendering report…")
