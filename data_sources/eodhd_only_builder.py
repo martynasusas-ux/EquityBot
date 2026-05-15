@@ -62,6 +62,36 @@ def fetch_company_data_eodhd_only(yf_ticker: str
     return company, bundle
 
 
+def fetch_peers_eodhd_only(yf_tickers: list[str]
+                            ) -> dict[str, CompanyData]:
+    """
+    Fetch EODHD-only CompanyData for a list of peer tickers.
+
+    Drops peers whose fetch returns no usable data (no name AND no
+    market_cap AND no revenue). Logs warnings rather than raising —
+    one bad peer should not break the whole report.
+
+    Returns:
+        dict mapping the original yf_ticker → CompanyData
+    """
+    out: dict[str, CompanyData] = {}
+    for tk in yf_tickers:
+        if not tk:
+            continue
+        try:
+            pd_, _ = fetch_company_data_eodhd_only(tk)
+        except Exception as e:
+            logger.warning(f"[eodhd-only] Peer {tk} fetch failed: {e}")
+            continue
+        la = pd_.latest_annual()
+        has_rev = bool(la and la.revenue)
+        if pd_.name and (pd_.market_cap or has_rev):
+            out[tk] = pd_
+        else:
+            logger.info(f"[eodhd-only] Peer {tk} returned no usable EODHD data — skipped")
+    return out
+
+
 def build_company_data_from_bundle(yf_ticker: str, bundle: dict) -> CompanyData:
     """
     Project an EODHD bundle dict into a CompanyData object. Every field

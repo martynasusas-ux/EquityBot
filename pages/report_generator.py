@@ -636,12 +636,12 @@ with col_left:
 
 with col_right:
     # Peer tickers — only relevant for Overview
-    st.markdown("#### Peer Tickers  *(Overview only, optional)*")
+    st.markdown("#### Peer Tickers  *(Overview V2 / Fisher / Gravity — optional)*")
     peers_input = st.text_input(
         "Peer tickers",
         placeholder="REL.L  TRI.TO  MSFT  (space-separated, up to 6)",
         label_visibility="collapsed",
-        disabled=(report_type != "overview_v2"),
+        disabled=(report_type not in ("overview_v2", "fisher", "gravity")),
         key="peers_input",
     )
 
@@ -1040,12 +1040,46 @@ if generate_clicked and ticker_input:
                 extra = {"checklist": checklist, "passed": passed}
 
             elif report_type == "fisher":
+                # ── Fisher Alternatives — EODHD-only data pipeline ────────────
+                from data_sources.eodhd_only_builder import (
+                    fetch_company_data_eodhd_only, fetch_peers_eodhd_only,
+                )
+                from data_sources.eodhd_macro import fetch_country_macro_block
                 from models.fisher import (
                     _build_fisher_prompt, _fisher_prompt_parts,
                     _validate_analysis, SYSTEM_PROMPT as SYS,
                 )
+
+                # Step 1: EODHD-only company data (overrides the waterfall
+                # company built earlier in this run).
+                _prog.progress(25, text="🔬  Fetching EODHD-only Fisher data…")
+                st.write("🔬  Fetching EODHD bundle (fundamentals + /eod + news + sentiment + insider)…")
+                company, _fisher_bundle = fetch_company_data_eodhd_only(ticker_input)
+                st.write(f"✓  EODHD endpoints used: {_fisher_bundle.get('endpoints_used',0)}/9")
+
+                # Step 2: Peers — user-provided list, EODHD-only fetch
+                fisher_peers: dict = {}
+                if peer_list:
+                    _prog.progress(45, text="🔍  Fetching EODHD peer data…")
+                    st.write(f"🔍  Fetching {len(peer_list)} peer(s) from EODHD…")
+                    fisher_peers = fetch_peers_eodhd_only(
+                        [p.strip().upper() for p in peer_list if p.strip()][:6]
+                    )
+                    st.write(f"✓  {len(fisher_peers)} peer(s) loaded: "
+                             f"{', '.join(fisher_peers.keys()) or 'none'}")
+
+                # Step 3: Country macro from EODHD /macro-indicator
+                _prog.progress(55, text="🌍  Fetching country macro from EODHD…")
+                fisher_country_macro = fetch_country_macro_block(company.country)
+                if fisher_country_macro:
+                    st.write(f"✓  EODHD macro for {company.country} loaded")
+
+                # Step 4: Build prompt + run LLM
                 cacheable_pfx, dynamic_prompt = _fisher_prompt_parts(
-                    company, news_block=_news_block, macro_country_block=_country_macro_block
+                    company,
+                    bundle=_fisher_bundle,
+                    peers=fisher_peers,
+                    country_macro_block=fisher_country_macro,
                 )
 
                 if adversarial_on:
@@ -1153,12 +1187,45 @@ if generate_clicked and ticker_input:
                 extra    = {"html_content": _html_content}
 
             else:  # gravity
+                # ── Gravity Taxers — EODHD-only data pipeline ─────────────────
+                from data_sources.eodhd_only_builder import (
+                    fetch_company_data_eodhd_only, fetch_peers_eodhd_only,
+                )
+                from data_sources.eodhd_macro import fetch_country_macro_block
                 from models.gravity import (
                     _build_gravity_prompt, _gravity_prompt_parts,
                     _validate_analysis, SYSTEM_PROMPT as SYS,
                 )
+
+                # Step 1: EODHD-only company data
+                _prog.progress(25, text="⚖️  Fetching EODHD-only Gravity data…")
+                st.write("⚖️  Fetching EODHD bundle (fundamentals + /eod + news + sentiment + insider)…")
+                company, _gravity_bundle = fetch_company_data_eodhd_only(ticker_input)
+                st.write(f"✓  EODHD endpoints used: {_gravity_bundle.get('endpoints_used',0)}/9")
+
+                # Step 2: Peers
+                gravity_peers: dict = {}
+                if peer_list:
+                    _prog.progress(45, text="🔍  Fetching EODHD peer data…")
+                    st.write(f"🔍  Fetching {len(peer_list)} peer(s) from EODHD…")
+                    gravity_peers = fetch_peers_eodhd_only(
+                        [p.strip().upper() for p in peer_list if p.strip()][:6]
+                    )
+                    st.write(f"✓  {len(gravity_peers)} peer(s) loaded: "
+                             f"{', '.join(gravity_peers.keys()) or 'none'}")
+
+                # Step 3: Country macro
+                _prog.progress(55, text="🌍  Fetching country macro from EODHD…")
+                gravity_country_macro = fetch_country_macro_block(company.country)
+                if gravity_country_macro:
+                    st.write(f"✓  EODHD macro for {company.country} loaded")
+
+                # Step 4: Build prompt + run LLM
                 cacheable_pfx, dynamic_prompt = _gravity_prompt_parts(
-                    company, news_block=_news_block, macro_country_block=_country_macro_block
+                    company,
+                    bundle=_gravity_bundle,
+                    peers=gravity_peers,
+                    country_macro_block=gravity_country_macro,
                 )
 
                 if adversarial_on:

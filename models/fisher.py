@@ -230,111 +230,66 @@ All 15 fisher_points entries must be present (numbers 1-15) and all 7 powers ent
 _FISHER_CACHEABLE = _build_fisher_fixed_block()
 
 
-# ── Financial data formatter ───────────────────────────────────────────────────
-
-def _format_financials_for_llm(company: CompanyData) -> str:
-    """Build a structured financial context block for the LLM prompt."""
-    cur = company.currency or "USD"
-    lines = []
-
-    lines.append(f"COMPANY:  {company.name or company.ticker} ({company.ticker})")
-    lines.append(f"SECTOR:   {company.sector or 'n/a'} — {company.industry or 'n/a'}")
-    lines.append(f"COUNTRY:  {company.country or 'n/a'} | CURRENCY: {cur}")
-    lines.append(f"EXCHANGE: {company.exchange or 'n/a'}")
-    lines.append(f"EMPLOYEES:{company.employees:,}" if company.employees else "EMPLOYEES: n/a")
-    if company.website:
-        lines.append(f"WEBSITE:  {company.website}")
-
-    if company.description:
-        desc = company.description[:800]
-        lines.append(f"\nBUSINESS DESCRIPTION:\n{desc}{'...' if len(company.description) > 800 else ''}")
-
-    lines.append(f"\nMARKET DATA (as of {company.as_of_date or 'n/a'}):")
-    lines.append(f"  Price:         {company.current_price} {company.currency_price or cur}")
-    lines.append(f"  Market Cap:    {_b(company.market_cap)} {cur}M")
-    lines.append(f"  EV:            {_b(company.enterprise_value)} {cur}M")
-
-    lines.append(f"\nVALUATION:")
-    lines.append(f"  P/E:        {_x(company.pe_ratio)}  | Fwd P/E: {_x(company.forward_pe)}")
-    lines.append(f"  EV/EBIT:    {_x(company.ev_ebit)}  | EV/EBITDA: {_x(company.ev_ebitda)}")
-    lines.append(f"  EV/Sales:   {_x(company.ev_sales)} | P/Book: {_x(company.price_to_book)}")
-    lines.append(f"  Div Yield:  {_pct(company.dividend_yield)} | FCF Yield: {_pct(company.fcf_yield)}")
-
-    lines.append(f"\nPROFITABILITY (TTM):")
-    lines.append(f"  Gross Margin: {_pct(company.gross_margin)} | EBIT Margin: {_pct(company.ebit_margin)}")
-    lines.append(f"  Net Margin:   {_pct(company.net_margin)} | EBITDA Margin: {_pct(company.ebitda_margin)}")
-    lines.append(f"  ROE:          {_pct(company.roe)} | ROA: {_pct(company.roa)}")
-    lines.append(f"  Net Debt:     {_b(company.net_debt)} {cur}M | Gearing: {_x(company.gearing)} x Net Debt/EBITDA")
-
-    years = company.sorted_years()[:6]
-    if years:
-        lines.append(f"\nANNUAL FINANCIALS ({cur}M, most recent first):")
-        lines.append(f"  {'':24} " + " ".join(f"{y:>10}" for y in years))
-        lines.append("  " + "-" * (24 + 11 * len(years)))
-
-        def row(label, getter, fmt="M"):
-            vals = []
-            for y in years:
-                af = company.annual_financials.get(y)
-                v  = getter(af) if af else None
-                if   fmt == "M":  vals.append(f"{v/1000:>9.1f}B" if v and abs(v)>=1000 else (f"{v:>9.0f}M" if v is not None else "      n/a"))
-                elif fmt == "%":  vals.append(f"{v*100:>9.1f}%" if v is not None else "      n/a")
-                elif fmt == "x":  vals.append(f"{v:>9.1f}x"  if v is not None else "      n/a")
-                elif fmt == "ps": vals.append(f"{v:>9.2f}"   if v is not None else "      n/a")
-            return f"  {label:<24} " + " ".join(vals)
-
-        lines.append(row("Revenue",          lambda a: a.revenue))
-        lines.append(row("EBITDA",           lambda a: a.ebitda))
-        lines.append(row("EBIT",             lambda a: a.ebit))
-        lines.append(row("Net Income",       lambda a: a.net_income))
-        lines.append(row("EPS (diluted)",    lambda a: a.eps_diluted,  "ps"))
-        lines.append(row("FCF",              lambda a: a.fcf))
-        lines.append(row("Net Debt",         lambda a: a.net_debt))
-        lines.append(row("ROE",              lambda a: a.roe,          "%"))
-        lines.append(row("EBIT Margin",      lambda a: a.ebit_margin,  "%"))
-        lines.append(row("Net Margin",       lambda a: a.net_margin,   "%"))
-        lines.append(row("Div/Share",        lambda a: a.dividends_per_share, "ps"))
-
-    c3 = company.revenue_cagr(3)
-    c5 = company.revenue_cagr(5)
-    lines.append(f"\nREVENUE CAGR: 3yr={_pct(c3)}  5yr={_pct(c5)}")
-
-    return "\n".join(lines)
+# Note: the old _format_financials_for_llm helper was removed when Fisher
+# moved to the shared EODHD-only context builder in models/_eodhd_context.py
+# (10-year history + peers + officers + insider + ratings + sentiment +
+#  news + forward estimates + country macro). See _fisher_prompt_parts.
 
 
 # ── LLM prompt builder ─────────────────────────────────────────────────────────
 
 def _fisher_prompt_parts(
     company: CompanyData,
-    news_block: str = "",
-    macro_country_block: str = "",
+    bundle: Optional[dict] = None,
+    peers: Optional[dict] = None,
+    country_macro_block: str = "",
 ) -> tuple[str, str]:
     """
     Return (cacheable_prefix, dynamic_content).
 
     cacheable_prefix  — all 15 Fisher questions + 7 Powers + full output schema.
                         ~1400 tokens — qualifies for Anthropic prompt caching.
-    dynamic_content   — company financials, macro, news (changes per company).
+    dynamic_content   — company financials + EODHD context (peers, officers,
+                        insider, ratings, sentiment, news, forward estimates,
+                        country macro). All EODHD-sourced.
+
+    Args:
+        company             — main subject CompanyData (EODHD-only build)
+        bundle              — raw EODHD endpoint bundle (news, sentiment, etc.)
+        peers               — dict[ticker → CompanyData] of EODHD-only peers
+        country_macro_block — pre-formatted country macro string from
+                               data_sources.eodhd_macro.fetch_country_macro_block
     """
-    fin_data = _format_financials_for_llm(company)
-    cur = company.currency or "USD"
+    from models._eodhd_context import build_eodhd_context, FISHER_ROWS
 
-    from data_sources.fred_adapter import get_macro_block
-    macro_block = get_macro_block()
-    macro_section = f"\n\n{macro_block}" if macro_block else ""
-    news_section = f"\n\n{news_block}" if news_block else ""
-    country_macro_section = f"\n\n{macro_country_block}" if macro_country_block else ""
+    if bundle is None:
+        # Legacy fallback: synthesise a minimal bundle from what's on the
+        # company object alone. Used only when something calls the prompt
+        # builder without first fetching the EODHD bundle.
+        bundle = {}
 
-    dynamic = (
-        f"{fin_data}{macro_section}{news_section}{country_macro_section}\n\n"
-        f"Currency is {cur}. Do not invent data not in the financial block above."
+    dynamic = build_eodhd_context(
+        company,
+        bundle,
+        FISHER_ROWS,
+        peers=peers,
+        country_macro_block=country_macro_block,
+        n_years=10,
     )
     return _FISHER_CACHEABLE, dynamic
 
 
-def _build_fisher_prompt(company: CompanyData, news_block: str = "", macro_country_block: str = "") -> str:
+def _build_fisher_prompt(
+    company: CompanyData,
+    bundle: Optional[dict] = None,
+    peers: Optional[dict] = None,
+    country_macro_block: str = "",
+) -> str:
     """Return the full prompt as a single string (used by adversarial mode)."""
-    cacheable, dynamic = _fisher_prompt_parts(company, news_block, macro_country_block)
+    cacheable, dynamic = _fisher_prompt_parts(
+        company, bundle=bundle, peers=peers,
+        country_macro_block=country_macro_block,
+    )
     return cacheable + "\n\n" + dynamic
 
 
@@ -362,21 +317,21 @@ def _m(v) -> str:
 
 class FisherModel:
     """
-    Runs the Fisher Alternatives analysis pipeline:
-      1. Fetch company data
-      2. Build LLM prompt (Fisher 15 + Helmer 7 Powers)
-      3. Parse JSON response
-      4. Generate PDF
+    Runs the Fisher Alternatives analysis pipeline (EODHD-only data):
+      1. Fetch EODHD bundle + EODHD-only CompanyData
+      2. Fetch country macro from EODHD /macro-indicator
+      3. Build LLM prompt (Fisher 15 + Helmer 7 Powers + rich EODHD context)
+      4. Parse JSON response → PDF
+    Note: this CLI path does not fetch peers — supply them in the UI dispatch.
     """
 
     def __init__(self):
-        self.dm  = DataManager()
         self.llm = LLMClient()
 
     def run(
         self,
         ticker: str,
-        force_refresh: bool = False,
+        force_refresh: bool = False,   # kept for API compat; EODHD has no cache here
         output_path: Optional[str] = None,
     ) -> str:
         """
@@ -384,16 +339,24 @@ class FisherModel:
         """
         logger.info(f"[Fisher] Starting for {ticker}")
 
-        # ── Step 1: Data ──────────────────────────────────────────────────────
-        print(f"\n  [1/4] Fetching data for {ticker}...")
-        company = self.dm.get(ticker, force_refresh=force_refresh)
+        # ── Step 1: Data (EODHD only) ─────────────────────────────────────────
+        print(f"\n  [1/4] Fetching EODHD bundle for {ticker}...")
+        from data_sources.eodhd_only_builder import fetch_company_data_eodhd_only
+        company, bundle = fetch_company_data_eodhd_only(ticker)
         print(f"         {company.name or ticker} | "
               f"{company.year_range()} | "
-              f"{company.completeness_pct()}% complete")
+              f"endpoints: {bundle.get('endpoints_used', 0)}/9")
+
+        # Country macro
+        from data_sources.eodhd_macro import fetch_country_macro_block
+        country_macro = fetch_country_macro_block(company.country)
 
         # ── Step 2: LLM Analysis ──────────────────────────────────────────────
         print(f"  [2/4] Running Fisher/Helmer analysis ({self.llm.provider}/{self.llm.model})...")
-        prompt     = _build_fisher_prompt(company)
+        prompt = _build_fisher_prompt(
+            company, bundle=bundle, peers=None,
+            country_macro_block=country_macro,
+        )
         adv_result = None
 
         if ADVERSARIAL_MODE:
