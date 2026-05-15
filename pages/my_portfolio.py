@@ -507,12 +507,14 @@ def _ticker_search(query: str) -> list[tuple[str, str]]:
     return out
 
 
-# ── Page header ───────────────────────────────────────────────────────────────
-st.title("📁 My Portfolio")
-st.caption(
-    "Personal watchlist powered by **EODHD only**. Add any ticker — stocks "
-    "(AAPL, RHM.DE), indices (^GSPC, ^DJI), ETFs (SPY) or forex "
-    "(EURUSD=X). Cards are collapsed by default — click ▾ to expand."
+# ── Page header (compact) ─────────────────────────────────────────────────────
+st.markdown(
+    "<div style='display:flex;align-items:center;gap:8px;"
+    "margin:0 0 6px 0;'>"
+    "<span style='font-size:20px;'>📁</span>"
+    "<span style='font-size:16px;font-weight:600;color:#1B3F6E;'>"
+    "My Portfolio</span></div>",
+    unsafe_allow_html=True,
 )
 
 if not EODHD_API_KEY:
@@ -944,9 +946,18 @@ else:
         )
 
 st.markdown("&nbsp;", unsafe_allow_html=True)
-st.caption(
-    "All data: **EODHD All-In-One** · Snapshot cached 15 min · "
-    "History 30 min · News 30 min · Earnings dates 6 h · "
-    "Recommendation is a rule-based heuristic on P/E + ROE + EBIT margin "
-    "— not investment advice."
+# ── Footer ────────────────────────────────────────────────────────────────────
+st.markdown(
+    "<div style='margin-top:24px;padding-top:8px;"
+    "border-top:1px solid #E0E5EC;color:#888;font-size:12px;"
+    "line-height:1.5;text-align:center;'>"
+    "Personal watchlist powered by <b>EODHD only</b>. Add any ticker — "
+    "stocks (AAPL, RHM.DE), indices (^GSPC, ^DJI), ETFs (SPY) or forex "
+    "(EURUSD=X). Cards are collapsed by default — click ▾ to expand."
+    "<br><span style='font-size:11px;color:#999;'>"
+    "Snapshot cached 15 min · History 30 min · News 30 min · "
+    "Earnings dates 6 h · Recommendation is a rule-based heuristic on "
+    "P/E + ROE + EBIT margin — not investment advice."
+    "</span></div>",
+    unsafe_allow_html=True,
 )

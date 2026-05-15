@@ -680,12 +680,14 @@ with st.sidebar:
 
 
 # ── Main area ─────────────────────────────────────────────────────────────────
-st.markdown("# 📊 Report Generator")
 st.markdown(
-    "Enter a ticker, pick a framework, and generate a professional investment report. "
-    "Reports use real financial data + LLM analysis calibrated to value investing principles."
+    "<div style='display:flex;align-items:center;gap:8px;"
+    "margin:0 0 6px 0;'>"
+    "<span style='font-size:20px;'>📊</span>"
+    "<span style='font-size:16px;font-weight:600;color:#1B3F6E;'>"
+    "Report Generator</span></div>",
+    unsafe_allow_html=True,
 )
-st.divider()
 
 # ── Input form ────────────────────────────────────────────────────────────────
 col_left, col_right = st.columns([1.4, 1], gap="large")
@@ -2142,3 +2144,15 @@ else:
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+st.markdown(
+    "<div style='margin-top:32px;padding-top:8px;"
+    "border-top:1px solid #E0E5EC;color:#888;font-size:12px;"
+    "line-height:1.5;text-align:center;'>"
+    "Enter a ticker, pick a framework, and generate a professional "
+    "investment report. Reports use real financial data + LLM analysis "
+    "calibrated to value investing principles."
+    "</div>",
+    unsafe_allow_html=True,
+)
