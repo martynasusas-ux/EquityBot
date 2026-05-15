@@ -1042,7 +1042,6 @@ with col_right:
         label_visibility="collapsed",
         disabled=(report_type not in (
             "overview_v2", "fisher", "fisher_peers", "gravity",
-            "industry_analysis",
         )),
         key="peers_input",
     )
@@ -1779,8 +1778,11 @@ if generate_clicked and ticker_input:
 
             elif report_type == "industry_analysis":
                 # ── Industry Analysis — Porter 5 Forces + Competitive Advantage
+                # No peer fetching — this framework focuses on the industry
+                # structure and the subject's own advantage, not a peer
+                # comparison.
                 from data_sources.eodhd_only_builder import (
-                    fetch_company_data_eodhd_only, fetch_peers_eodhd_only,
+                    fetch_company_data_eodhd_only,
                 )
                 from data_sources.eodhd_macro import fetch_country_macro_block
                 from models.industry_analysis import (
@@ -1789,63 +1791,30 @@ if generate_clicked and ticker_input:
                 )
 
                 # Step 1: EODHD-only subject data
-                _prog.progress(15, text="🏛️  Fetching EODHD-only data for industry analysis…")
+                _prog.progress(20, text="🏛️  Fetching EODHD-only subject data…")
                 st.write("🏛️  Fetching EODHD bundle (10y financials + news + sentiment)…")
                 company, _ia_bundle = fetch_company_data_eodhd_only(ticker_input)
                 st.write(f"✓  EODHD endpoints used: {_ia_bundle.get('endpoints_used',0)}/9")
 
-                # Step 2: Peers — auto-suggest if user didn't provide any
-                ia_peers: dict = {}
-                _ia_suggest_usage: dict = {}
-                if peer_list:
-                    _ia_peer_tickers = [
-                        p.strip().upper() for p in peer_list if p.strip()
-                    ][:6]
-                else:
-                    _prog.progress(25, text="🤝  Asking LLM to suggest industry peers…")
-                    st.write("🤝  No peers supplied — asking LLM for peer suggestions…")
-                    try:
-                        from models.fisher_peers import suggest_peers as _suggest_peers
-                        _ia_peer_tickers, _ia_suggest_usage = _suggest_peers(
-                            company, max_peers=6,
-                        )
-                    except Exception as _se:
-                        _ia_peer_tickers = []
-                        st.warning(f"Peer suggestion failed: {_se}")
-                    if _ia_suggest_usage:
-                        _show_token_usage(_ia_suggest_usage)
-                    if _ia_peer_tickers:
-                        st.write(
-                            f"💡  LLM suggested peers: "
-                            f"{', '.join(_ia_peer_tickers)}"
-                        )
-
-                if _ia_peer_tickers:
-                    _prog.progress(40, text="🔍  Fetching EODHD peer data…")
-                    ia_peers = fetch_peers_eodhd_only(_ia_peer_tickers)
-                    st.write(f"✓  {len(ia_peers)} peer(s) loaded: "
-                             f"{', '.join(ia_peers.keys()) or 'none'}")
-
-                # Step 3: Country macro
-                _prog.progress(50, text="🌍  Fetching country macro from EODHD…")
+                # Step 2: Country macro
+                _prog.progress(40, text="🌍  Fetching country macro from EODHD…")
                 ia_country_macro = fetch_country_macro_block(company.country)
 
-                # Step 4: Main LLM call — long-form Porter analysis
+                # Step 3: Main LLM call — 2,000-3,000 word Porter analysis
                 cacheable_pfx, dynamic_prompt = _industry_prompt_parts(
                     company,
                     bundle=_ia_bundle,
-                    peers=ia_peers,
                     country_macro_block=ia_country_macro,
                 )
 
-                _prog.progress(60, text="🧠  Running Porter 5 Forces analysis (long form)…")
+                _prog.progress(55, text="🧠  Running Porter 5 Forces analysis…")
                 st.write("🧠  Running Porter 5 Forces + Competitive Advantage "
-                         "analysis (4,000–5,000 words; typically 60-120 s)…")
+                         "analysis (~2,000-3,000 words; typically 45-90 s)…")
 
                 if adversarial_on:
                     full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
                     adv_result = _adv_engine.run(
-                        full_prompt, IA_SYS, max_tokens=12000,
+                        full_prompt, IA_SYS, max_tokens=8000,
                         report_type="overview",  # adversarial reuses overview merger
                     )
                     analysis = _validate_analysis(adv_result.merged)
@@ -1856,7 +1825,7 @@ if generate_clicked and ticker_input:
                     )
                 else:
                     analysis = llm.generate_json(
-                        dynamic_prompt, IA_SYS, max_tokens=12000,
+                        dynamic_prompt, IA_SYS, max_tokens=8000,
                         cacheable_prefix=cacheable_pfx,
                     )
                     analysis = _validate_analysis(analysis)
@@ -1866,21 +1835,6 @@ if generate_clicked and ticker_input:
                         f"Advantage: **{analysis.get('competitive_advantage_size')}**"
                     )
                     _show_token_usage(llm.last_usage)
-
-                # Combine peer-suggestion usage into the main usage for the
-                # cost block (only in non-adversarial path — adversarial
-                # tracks its own).
-                if not adversarial_on:
-                    _ia_main_usage = dict(llm.last_usage or {})
-                    if _ia_suggest_usage:
-                        for _k, _v in _ia_suggest_usage.items():
-                            _ia_main_usage[_k] = (
-                                (_ia_main_usage.get(_k) or 0) + (_v or 0)
-                            )
-                    try:
-                        llm.last_usage = _ia_main_usage
-                    except Exception:
-                        pass
 
                 _prog.progress(90, text="📄  Rendering Industry Analysis PDF…")
                 st.write("📄  Rendering Industry Analysis PDF…")

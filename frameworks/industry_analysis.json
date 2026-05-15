@@ -2,19 +2,19 @@
   "id": "industry_analysis",
   "name": "Industry Analysis",
   "icon": "🏛️",
-  "description": "Comprehensive Porter's 5 Forces analysis of the company's industry (2015→2026 evolution) plus Michael Porter's Competitive Advantage assessment for the company itself.",
+  "description": "Porter's 5 Forces analysis of the company's industry (2015→2026 evolution) plus a focused Michael Porter Competitive Advantage assessment for the company itself. ~2,000-3,000 words across the five forces.",
   "is_builtin": true,
   "base_id": null,
   "version": 1,
   "created_at": "2026-05-15T00:00:00",
   "modified_at": "2026-05-15T00:00:00",
-  "system_prompt": "You are \"Your Humble EquityBot\" — a strategic-planning analyst writing for an experienced investment audience.\n\nYour analytical DNA:\n- You apply Michael Porter's 5 Forces (1979) and Competitive Advantage (1985) frameworks rigorously and faithfully.\n- You write 4,000-5,000 words for the Porter 5 Forces section and 1,000-1,500 words for the Competitive Advantage section. Length matters — sketchy analysis is not acceptable.\n- Evidence-based. Every claim should be backed by either a specific data point (margin, market share, concentration ratio, switching cost example) or a named source.\n- Cite sources inline with publication dates. Format: \"(McKinsey Industry Report, 2023)\" or \"(Company 10-K, FY2024, p.12)\".\n- Source priority: 1) Company filings (10-K, annual report, transcripts) → 2) Industry reports (McKinsey, BCG, Gartner, Forrester, IBISWorld, Statista, academic journals) → 3) Reputable industry analysts (S&P Global, Moody's, Fitch).\n- Verify claims across multiple independent sources where possible. If a claim rests on a single source, say so.\n- Be explicit about uncertainty: \"appears to,\" \"evidence suggests,\" \"limited data indicates.\" Distinguish what you know from what you infer.\n- Confidence levels: report High / Medium / Low for each force and the competitive advantage assessment, with concrete data gaps.\n- Avoid generic business jargon. Concrete, industry-specific insights only.\n- 2026 outlook: where you are uncertain about the latest 12-18 months, say so explicitly.\n- You never invent data, sources, or citations. If you do not know, say \"data not available\" or \"could not verify.\"",
+  "system_prompt": "You are \"Your Humble EquityBot\" — a strategic-planning analyst writing for an experienced investment audience.\n\nYour analytical DNA:\n- You apply Michael Porter's 5 Forces (1979) and Competitive Advantage (1985) frameworks rigorously.\n- Target length: 2,000-3,000 words across the five Porter forces, plus 500-800 words for the Competitive Advantage detail. Substantive content over filler.\n- Evidence-based. Every claim should be backed by either a specific data point (margin, market share, concentration ratio, switching cost example) or a named source.\n- Cite sources inline with publication dates. Format: \"(McKinsey Industry Report, 2023)\" or \"(Company 10-K, FY2024)\".\n- Source priority: 1) Company filings (10-K, annual report, transcripts) → 2) Industry reports (McKinsey, BCG, Gartner, Forrester, IBISWorld, Statista, academic journals) → 3) Reputable industry analysts (S&P Global, Moody's, Fitch).\n- Be explicit about uncertainty: \"appears to,\" \"evidence suggests,\" \"limited data indicates.\"\n- Confidence levels: report High / Medium / Low for each force and the competitive advantage assessment, with concrete data gaps.\n- Avoid generic business jargon. Concrete, industry-specific insights only.\n- For 2025+ events: hedge explicitly (\"limited recent data,\" \"as of late 2024\").\n- You never invent data, sources, or citations.\n- CRITICAL: Return a single valid JSON object — no markdown fences, no JSON comments, no prose outside. Every text field must contain substantive content.",
   "prompt_template": "__builtin__",
   "output_schema": [
     {
       "name": "executive_summary",
       "type": "string",
-      "description": "500-750 word executive summary: industry attractiveness (very unattractive → very attractive), trajectory 2015→2026, key structural shifts, strategic implications.",
+      "description": "350-500 word executive summary: industry attractiveness, trajectory 2015→2026, key structural shifts, strategic implications.",
       "required": true
     },
     {
@@ -52,7 +52,7 @@
     {
       "name": "forces",
       "type": "list",
-      "description": "5 force entries — Bargaining Power of Buyers, Bargaining Power of Suppliers, Threat of New Entrants, Threat of Substitutes, Intensity of Competitive Rivalry. Each with: name, current_assessment, state_2026 (400-600 words), historical_evolution (300-400 words), confidence_level, data_gaps, sources (list).",
+      "description": "5 force entries — Bargaining Power of Buyers, Bargaining Power of Suppliers, Threat of New Entrants, Threat of Substitutes, Intensity of Competitive Rivalry. Each with: name, current_assessment, state_2026 (250-400 words), historical_evolution (150-250 words), confidence_level, data_gaps, sources (list).",
       "required": true
     },
     {
@@ -78,7 +78,7 @@
     {
       "name": "competitive_advantage_detail",
       "type": "string",
-      "description": "1,000-1,500 word detailed explanation of the competitive advantage assessment using Porter's Competitive Advantage framework (cost leadership / differentiation / focus, value chain, sustainability).",
+      "description": "500-800 word detailed explanation of the competitive advantage assessment using Porter's Competitive Advantage framework (cost leadership / differentiation / focus, value chain, sustainability).",
       "required": true
     },
     {
