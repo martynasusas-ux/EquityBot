@@ -583,6 +583,11 @@ else:
                         time_col = df_chart.columns[0]   # "Date" or "Time"
                         low_p  = float(df_chart["Close"].min())
                         high_p = float(df_chart["Close"].max())
+                        first_px = float(df_chart["Close"].iloc[0])
+                        last_px  = float(df_chart["Close"].iloc[-1])
+                        chg_pct  = (last_px / first_px - 1) * 100 if first_px else 0
+                        abs_chg  = last_px - first_px
+
                         # Add a small padding around the range so the line
                         # doesn't hug the chart edges.
                         span = max(high_p - low_p, abs(low_p) * 0.001)
@@ -590,10 +595,34 @@ else:
                         y_min = low_p - pad
                         y_max = high_p + pad
 
-                        # Line colour: green if last >= first, red otherwise
-                        first_px = float(df_chart["Close"].iloc[0])
-                        last_px  = float(df_chart["Close"].iloc[-1])
-                        line_color = "#1A7E3D" if last_px >= first_px else "#B83227"
+                        # Line + heading colour: green if up, red if down
+                        line_color = "#1A7E3D" if chg_pct >= 0 else "#B83227"
+                        arrow      = "▲" if chg_pct >= 0 else "▼"
+
+                        # ── Prominent period-change banner above the chart ──
+                        ccy = snap.get("currency") or ""
+                        st.markdown(
+                            f"<div style='display:flex;align-items:baseline;"
+                            f"justify-content:space-between;margin:8px 0 4px 0;"
+                            f"padding:6px 10px;background:#F4F8FC;"
+                            f"border-left:4px solid {line_color};"
+                            f"border-radius:4px;'>"
+                            f"<div>"
+                            f"<span style='color:#666;font-size:13px;'>"
+                            f"{sel_period} change</span>&nbsp;&nbsp;"
+                            f"<span style='color:{line_color};font-weight:700;"
+                            f"font-size:22px;'>{arrow} {chg_pct:+.2f}%</span>"
+                            f"&nbsp;&nbsp;"
+                            f"<span style='color:{line_color};font-size:15px;"
+                            f"font-weight:600;'>"
+                            f"({abs_chg:+,.2f} {ccy})</span>"
+                            f"</div>"
+                            f"<div style='color:#888;font-size:12px;'>"
+                            f"{first_px:,.2f} → {last_px:,.2f}"
+                            f"</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
 
                         x_type = "T"   # temporal works for both Date + Time
                         chart = (
@@ -624,11 +653,9 @@ else:
                         )
                         st.altair_chart(chart, use_container_width=True)
 
-                        chg_pct  = (last_px / first_px - 1) * 100 if first_px else 0
-                        sc1, sc2, sc3 = st.columns(3)
-                        sc1.caption(f"**{sel_period} change:** {chg_pct:+.1f}%")
-                        sc2.caption(f"**{sel_period} low:** {low_p:,.2f}")
-                        sc3.caption(f"**{sel_period} high:** {high_p:,.2f}")
+                        sc1, sc2 = st.columns(2)
+                        sc1.caption(f"**{sel_period} low:** {low_p:,.2f}")
+                        sc2.caption(f"**{sel_period} high:** {high_p:,.2f}")
                     except Exception as e:
                         st.warning(f"Chart rendering failed: {e}")
 
