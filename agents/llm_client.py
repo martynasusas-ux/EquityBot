@@ -62,6 +62,7 @@ class LLMClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         cacheable_prefix: str = "",
+        force_json: bool = False,
     ) -> str:
         """
         Generate a text response from the configured LLM.
@@ -71,6 +72,9 @@ class LLMClient:
         block with cache_control:ephemeral (Claude only). Use this for the framework
         instructions / output schema portion of the prompt — it stays the same across
         runs of the same framework, so Anthropic can cache and re-read it cheaply.
+
+        force_json: when True, request structured JSON output from the provider
+        (OpenAI: response_format=json_object). Used by generate_json().
         """
         start = time.time()
         logger.info(f"[LLMClient] Calling {self.provider}/{self.model} "
@@ -78,9 +82,12 @@ class LLMClient:
 
         if self.provider == "claude":
             result = self._claude(user_prompt, system_prompt, max_tokens, temperature,
-                                  cacheable_prefix)
+                                  cacheable_prefix=cacheable_prefix,
+                                  force_json=force_json)
         elif self.provider == "openai":
-            result = self._openai(user_prompt, system_prompt, max_tokens, temperature)
+            result = self._openai(user_prompt, system_prompt, max_tokens, temperature,
+                                  cacheable_prefix=cacheable_prefix,
+                                  force_json=force_json)
         else:
             raise ValueError(f"Unknown LLM provider: '{self.provider}'. "
                              f"Set LLM_PROVIDER=claude or LLM_PROVIDER=openai in .env")
@@ -119,7 +126,8 @@ class LLMClient:
             "No markdown, no code blocks, no commentary before or after the JSON object."
         )
         raw = self.generate(user_prompt + json_instruction, system_prompt, max_tokens,
-                            cacheable_prefix=cacheable_prefix)
+                            cacheable_prefix=cacheable_prefix,
+                            force_json=True)
         self.last_raw_response = raw or ""
 
         # Strip any markdown code fences the model might add despite instructions
@@ -141,6 +149,18 @@ class LLMClient:
             if match:
                 try:
                     return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+            # Fallback 3: truncated-JSON repair (max_tokens hit mid-response)
+            repaired = _try_repair_truncated_json(cleaned)
+            if repaired:
+                try:
+                    salvaged = json.loads(repaired)
+                    logger.warning(
+                        f"[LLMClient] JSON was truncated — salvaged "
+                        f"{len(salvaged)} top-level keys via repair."
+                    )
+                    return salvaged
                 except json.JSONDecodeError:
                     pass
             logger.error(
@@ -171,6 +191,7 @@ class LLMClient:
         max_tokens: int,
         temperature: float,
         cacheable_prefix: str = "",
+        force_json: bool = False,
     ) -> str:
         try:
             import anthropic
@@ -258,6 +279,7 @@ class LLMClient:
         max_tokens: int,
         temperature: float,
         cacheable_prefix: str = "",   # prepended to user_prompt (no server-side caching for OpenAI)
+        force_json: bool = False,
     ) -> str:
         try:
             from openai import OpenAI
@@ -282,20 +304,18 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
 
-        # Force GPT-4o into JSON mode when the prompt clearly requests JSON.
-        # The generate_json() wrapper always appends "Return ONLY valid JSON"
-        # to the user prompt, so this heuristic catches every JSON call.
-        # Without this, GPT-4o frequently returns prose / partial JSON for
-        # complex schemas — which is what was leaving Industry Analysis
-        # PDFs empty.
         kwargs: dict = dict(
             model=self.model,
             max_tokens=max_tokens,
             temperature=temperature,
             messages=messages,
         )
-        _lc_prompt = (user_prompt or "").lower()
-        if "valid json" in _lc_prompt or "return only valid" in _lc_prompt:
+        # Hard-enable JSON mode when the caller explicitly asks for it
+        # (from generate_json). This guarantees valid JSON output —
+        # without it GPT-4o frequently returns prose-wrapped or
+        # markdown-fenced responses for complex schemas, which the
+        # downstream parser then fails on.
+        if force_json:
             kwargs["response_format"] = {"type": "json_object"}
 
         try:
@@ -399,6 +419,88 @@ def _strip_code_fences(text: str) -> str:
     # Handle ``` at the end
     text = re.sub(r'\n?`{3,}\s*$', '', text)
     return text.strip()
+
+
+def _try_repair_truncated_json(text: str) -> Optional[str]:
+    """
+    Attempt to salvage a truncated JSON object response.
+
+    GPT-4o / Claude can hit max_tokens mid-string when asked for long
+    structured output. The response then looks like:
+
+        {"summary": "…long text", "forces": [{"name": "Buyers", "state_…
+
+    json.loads chokes. This helper walks the text from the end backwards,
+    finds the last complete `key: value` pair, drops anything after it,
+    and closes any open arrays / objects. Returns the repaired string
+    if it now parses, else None.
+    """
+    if not text or "{" not in text:
+        return None
+    text = text.strip()
+    # Trim trailing junk after the last brace / bracket
+    last_brace = max(text.rfind("}"), text.rfind("]"))
+    if last_brace < 0:
+        # No closing token at all — text is a truncated string mid-value.
+        # Walk back to the last ", at depth 0 or any clean quoted boundary
+        # and close the open structures.
+        candidate = text
+    else:
+        candidate = text[:last_brace + 1]
+
+    # Walk char-by-char tracking depth + string state
+    depth_obj = 0       # open { count
+    depth_arr = 0       # open [ count
+    in_string = False
+    escaped   = False
+    last_safe = -1      # index after a comma at top-of-object level
+    for i, ch in enumerate(candidate):
+        if escaped:
+            escaped = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth_obj += 1
+        elif ch == "}":
+            depth_obj -= 1
+        elif ch == "[":
+            depth_arr += 1
+        elif ch == "]":
+            depth_arr -= 1
+        elif ch == "," and not in_string:
+            last_safe = i
+
+    # If we end inside a string, trim back to just before the last open quote
+    if in_string:
+        last_quote = candidate.rfind('"', 0, len(candidate))
+        if last_quote > 0:
+            # Step back to the previous comma if any so we drop the
+            # partial key:value pair entirely
+            comma = candidate.rfind(",", 0, last_quote)
+            if comma > 0:
+                candidate = candidate[:comma]
+                depth_obj = candidate.count("{") - candidate.count("}")
+                depth_arr = candidate.count("[") - candidate.count("]")
+            else:
+                # No safe boundary — bail out
+                return None
+        else:
+            return None
+
+    # Close open arrays and objects
+    repaired = candidate.rstrip(", \n\t") + ("]" * max(0, depth_arr)) + ("}" * max(0, depth_obj))
+    try:
+        json.loads(repaired)
+        return repaired
+    except Exception:
+        return None
 
 
 def _build_critique_prompt(primary: dict, secondary: dict) -> str:
