@@ -28,9 +28,16 @@ import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_searchbox import st_searchbox
 
 from config import EODHD_API_KEY, REQUEST_HEADERS
 from data_sources.eodhd_adapter import _YF_TO_EODHD
+
+# Reverse mapping: EODHD exchange code → Yahoo Finance suffix.
+# Built once from _YF_TO_EODHD. Some collisions are inevitable (e.g. both
+# ".VX" and ".SW" map to EODHD ".SW") — the last entry wins, which for our
+# use case (showing results to the user) is fine.
+_EODHD_TO_YF = {v: k for k, v in _YF_TO_EODHD.items()}
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -425,6 +432,81 @@ def _normalize_ticker(raw: str) -> str:
     return raw.strip().upper().replace(" ", "")
 
 
+# ── Reverse ticker conversion (EODHD → Yahoo Finance) ────────────────────────
+def _eodhd_to_yf(code: str, exchange: str) -> str:
+    """
+    Convert EODHD (Code, Exchange) → Yahoo Finance ticker so it can be
+    stored in the portfolio the same way users normally enter it.
+
+    Examples:
+      ("AAPL",   "US")    → "AAPL"
+      ("RHM",    "XETRA") → "RHM.DE"
+      ("005930", "KO")    → "005930.KS"
+      ("GSPC",   "INDX")  → "^GSPC"
+      ("EURUSD", "FOREX") → "EURUSD=X"
+    """
+    code = (code or "").strip().upper()
+    exch = (exchange or "").strip().upper()
+    if not code:
+        return ""
+    if exch in ("", "US"):
+        return code
+    if exch == "INDX":
+        return "^" + code
+    if exch == "FOREX":
+        return code + "=X"
+    eodhd_suffix = f".{exch}"
+    yf_suffix = _EODHD_TO_YF.get(eodhd_suffix, eodhd_suffix)
+    return f"{code}{yf_suffix}"
+
+
+# ── EODHD search (cached) ────────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)   # 5-minute cache per query
+def _search_eodhd_raw(query: str) -> list[dict]:
+    """Hit EODHD /search/{query} — returns the raw list of matches."""
+    q = (query or "").strip()
+    if len(q) < 1:
+        return []
+    data = _eodhd_get(f"/search/{q}", params={"limit": 15})
+    return data if isinstance(data, list) else []
+
+
+def _ticker_search(query: str) -> list[tuple[str, str]]:
+    """
+    Callback for st_searchbox. Returns a list of (display_label, yf_ticker)
+    tuples. yf_ticker is the value stored in the portfolio on selection.
+
+    Empty / very short queries return [] — searchbox simply shows nothing.
+    """
+    if not query or len(query.strip()) < 1:
+        return []
+    rows = _search_eodhd_raw(query)
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        code = item.get("Code", "")
+        exch = item.get("Exchange", "")
+        name = item.get("Name", "") or ""
+        ttype = (item.get("Type") or "").strip()
+        country = (item.get("Country") or "").strip()
+        if not code:
+            continue
+        yf_ticker = _eodhd_to_yf(code, exch)
+        if not yf_ticker or yf_ticker in seen:
+            continue
+        seen.add(yf_ticker)
+        # Build a compact, readable label
+        meta_bits = [b for b in (exch, country, ttype) if b]
+        meta = " · ".join(meta_bits)
+        label = f"{yf_ticker:<14}  {name[:48]}"
+        if meta:
+            label += f"  ({meta})"
+        out.append((label, yf_ticker))
+    return out
+
+
 # ── Page header ───────────────────────────────────────────────────────────────
 st.title("📁 My Portfolio")
 st.caption(
@@ -449,33 +531,25 @@ if "portfolio_expanded" not in st.session_state:
 if "portfolio_periods" not in st.session_state:
     st.session_state.portfolio_periods = {}            # ticker -> selected period
 
-# ── Add-ticker form ───────────────────────────────────────────────────────────
-with st.form("add_ticker_form", clear_on_submit=True):
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        new_ticker = st.text_input(
-            "Add ticker",
-            placeholder="e.g. AAPL, RHM.DE, ^GSPC, EURUSD=X",
-            label_visibility="collapsed",
-        )
-    with col2:
-        add_btn = st.form_submit_button("➕ Add", use_container_width=True)
+# ── Add-ticker searchbox (type-as-you-go, EODHD /search) ──────────────────────
+# st_searchbox calls _ticker_search() on every keystroke (debounced) and
+# shows the returned suggestions in a dropdown beneath the input. Picking
+# one adds it to the portfolio immediately — no extra confirm click.
+selected_ticker = st_searchbox(
+    search_function=_ticker_search,
+    placeholder="🔍 Type a ticker or company name (e.g. AAPL, Rheinmetall, S&P 500)",
+    label=None,
+    clear_on_submit=True,
+    key="ticker_searchbox",
+)
 
-if add_btn and new_ticker:
-    norm = _normalize_ticker(new_ticker)
+if selected_ticker:
+    norm = _normalize_ticker(selected_ticker)
     if norm and norm not in st.session_state.portfolio_tickers:
-        with st.spinner(f"Verifying {norm} via EODHD..."):
-            test = _fetch_snapshot(norm)
-        if test["price"] is None and not test.get("market_cap"):
-            st.error(
-                f"Couldn't find EODHD data for **{norm}** "
-                f"(tried `{test['eodhd_ticker']}`). Check the ticker format."
-            )
-        else:
-            st.session_state.portfolio_tickers.append(norm)
-            _save_portfolio(st.session_state.portfolio_tickers)
-            st.success(f"Added **{norm}** to portfolio.")
-            st.rerun()
+        st.session_state.portfolio_tickers.append(norm)
+        _save_portfolio(st.session_state.portfolio_tickers)
+        st.success(f"Added **{norm}** to portfolio.")
+        st.rerun()
     elif norm in st.session_state.portfolio_tickers:
         st.info(f"**{norm}** is already in your portfolio.")
 
