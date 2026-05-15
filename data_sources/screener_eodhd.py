@@ -136,39 +136,60 @@ def fetch_index_components(yf_index: str) -> list[dict]:
     """
     Return the constituent list of an index from EODHD.
 
+    Tries the standard `{SYMBOL}.INDX` ticker first, then a small set of
+    fallback exchange codes for indices EODHD lists under a regional
+    exchange instead of the global INDX one.
+
     Each entry is:
         {"yf_ticker": "AAPL", "eodhd_code": "AAPL", "eodhd_exchange": "US",
          "name": "Apple Inc.", "sector": "Technology", ...}
     """
-    eodhd_idx = _yf_index_to_eodhd(yf_index)
-    fund = _eodhd_get(f"/fundamentals/{eodhd_idx}")
-    if not isinstance(fund, dict):
-        return []
+    # Build candidate EODHD tickers to try in order
+    primary = _yf_index_to_eodhd(yf_index)
+    candidates = [primary]
+    # Strip the suffix to derive the bare symbol — used to construct fallbacks
+    base = primary.split(".")[0] if "." in primary else primary
 
-    comps = fund.get("Components") or {}
-    if not isinstance(comps, dict):
-        return []
+    # Known regional exchange codes EODHD uses for non-INDX indices
+    for alt_suffix in (".WAR", ".LSE", ".XETRA", ".PA",
+                       ".VI", ".SW", ".AS", ".MI", ".HE", ".ST"):
+        cand = f"{base}{alt_suffix}"
+        if cand not in candidates:
+            candidates.append(cand)
 
-    out: list[dict] = []
-    for _, c in comps.items():
-        if not isinstance(c, dict):
+    for cand in candidates:
+        fund = _eodhd_get(f"/fundamentals/{cand}")
+        if not isinstance(fund, dict):
             continue
-        code = c.get("Code") or ""
-        exch = c.get("Exchange") or ""
-        if not code:
+        comps = fund.get("Components") or {}
+        if not isinstance(comps, dict) or not comps:
             continue
-        yf_ticker = _component_to_yf(code, exch)
-        if not yf_ticker:
-            continue
-        out.append({
-            "yf_ticker":      yf_ticker,
-            "eodhd_code":     code,
-            "eodhd_exchange": exch,
-            "name":           c.get("Name") or "",
-            "sector":         c.get("Sector") or "",
-            "industry":       c.get("Industry") or "",
-        })
-    return out
+        out: list[dict] = []
+        for _, c in comps.items():
+            if not isinstance(c, dict):
+                continue
+            code = c.get("Code") or ""
+            exch = c.get("Exchange") or ""
+            if not code:
+                continue
+            yf_ticker = _component_to_yf(code, exch)
+            if not yf_ticker:
+                continue
+            out.append({
+                "yf_ticker":      yf_ticker,
+                "eodhd_code":     code,
+                "eodhd_exchange": exch,
+                "name":           c.get("Name") or "",
+                "sector":         c.get("Sector") or "",
+                "industry":       c.get("Industry") or "",
+            })
+        if out:
+            logger.info(f"[screener] resolved {yf_index} → {cand} ({len(out)} components)")
+            return out
+
+    logger.warning(f"[screener] no components found for {yf_index} "
+                   f"(tried: {', '.join(candidates)})")
+    return []
 
 
 # ── Per-ticker metric fetch ──────────────────────────────────────────────────

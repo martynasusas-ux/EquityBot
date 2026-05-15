@@ -94,24 +94,79 @@ TICKER NORMALISATION
   "Lockheed" → "LMT"; "S&P 500" → universe "^GSPC", NOT tickers.
 
 UNIVERSE / INDEX RECOGNITION
-- "S&P 500", "SP500", "SPX", "S&P"        → "^GSPC"
-- "Nasdaq 100", "NDX", "Nasdaq"            → "^NDX"
-- "Dow", "Dow Jones", "DJI"                → "^DJI"
-- "Russell 1000"                           → "^RUI"
-- "DAX", "DAX 40", "Xetra DAX"             → "^GDAXI"
-- "MDAX"                                   → "^MDAXI"
-- "FTSE 100", "FTSE", "Footsie"            → "^FTSE"
-- "CAC 40", "CAC"                          → "^FCHI"
-- "IBEX 35", "IBEX"                        → "^IBEX"
-- "OMX Stockholm 30", "OMX"                → "^OMX"
-- "OMX Helsinki", "OMXH25"                 → "^OMXH25"
-- "STOXX 50", "EURO STOXX 50"              → "^STOXX50E"
-- "STOXX 600"                              → "^STOXX"
-- "Nikkei 225", "Nikkei", "N225"           → "^N225"
-- "Hang Seng", "HSI"                       → "^HSI"
-- "KOSPI"                                  → "^KS11"
-- If you don't recognise the index, leave universe as null and put
-  "Unknown index: <name>" in notes.
+Use Yahoo Finance index format (prefix with "^"). Common mappings:
+
+  US:
+    "S&P 500" / "SP500" / "SPX"                     → "^GSPC"
+    "Nasdaq 100" / "NDX"                            → "^NDX"
+    "Nasdaq Composite" / "Nasdaq"                   → "^IXIC"
+    "Dow" / "Dow Jones" / "DJIA"                    → "^DJI"
+    "Russell 1000"                                  → "^RUI"
+    "Russell 2000"                                  → "^RUT"
+
+  Europe:
+    "DAX" / "DAX 40" / "Xetra DAX"                  → "^GDAXI"
+    "MDAX"                                          → "^MDAXI"
+    "TecDAX"                                        → "^TECDAX"
+    "FTSE 100" / "FTSE" / "Footsie"                 → "^FTSE"
+    "FTSE 250"                                      → "^FTMC"
+    "CAC 40" / "CAC"                                → "^FCHI"
+    "IBEX 35" / "IBEX"                              → "^IBEX"
+    "AEX"                                           → "^AEX"
+    "BEL 20"                                        → "^BFX"
+    "SMI" / "Swiss Market Index"                    → "^SSMI"
+    "ATX" / "Vienna ATX"                            → "^ATX"
+    "PSI 20" / "Lisbon PSI"                         → "^PSI20"
+    "ISEQ"                                          → "^ISEQ"
+    "OMX Stockholm 30" / "OMXS30" / "OMX"           → "^OMX"
+    "OMX Helsinki" / "OMXH25"                       → "^OMXH25"
+    "OMX Copenhagen" / "OMXC25"                     → "^OMXC25"
+    "OBX" / "Oslo OBX"                              → "^OBX"
+    "STOXX 50" / "EURO STOXX 50"                    → "^STOXX50E"
+    "STOXX 600"                                     → "^STOXX"
+    "WIG 20" / "WIG20"                              → "^WIG20"
+    "WIG" / "WIG All"                               → "^WIG"
+    "BUX" / "Budapest BUX"                          → "^BUX"
+    "PX" / "Prague PX"                              → "^PX"
+    "ATHEX" / "ASE General"                         → "^ATG"
+
+  Asia:
+    "Nikkei 225" / "Nikkei" / "N225"                → "^N225"
+    "TOPIX"                                         → "^TPX"
+    "Hang Seng" / "HSI"                             → "^HSI"
+    "Hang Seng Tech" / "HSTECH"                     → "^HSTECH"
+    "Shanghai Composite" / "SSE"                    → "000001.SS"
+    "Shenzhen Composite"                            → "399001.SZ"
+    "CSI 300"                                       → "000300.SS"
+    "KOSPI" / "KOSPI 200"                           → "^KS11"
+    "TWII" / "Taiwan Weighted"                      → "^TWII"
+    "NIFTY 50" / "NIFTY"                            → "^NSEI"
+    "SENSEX" / "BSE Sensex"                         → "^BSESN"
+    "STI" / "Straits Times"                         → "^STI"
+    "SET" / "Bangkok SET"                           → "^SET.BK"
+
+  Americas (ex-US):
+    "TSX" / "TSX Composite"                         → "^GSPTSE"
+    "BOVESPA" / "IBOV"                              → "^BVSP"
+    "MERVAL" / "S&P MERVAL"                         → "^MERV"
+    "IPC" / "Mexico IPC"                            → "^MXX"
+
+  Africa / Middle East:
+    "JTOPI" / "JSE Top 40"                          → "^J200"
+    "TA-35" / "Tel Aviv 35"                         → "^TA35.TA"
+    "BIST 100" / "XU100"                            → "^XU100"
+    "TASI" / "Saudi TASI"                           → "^TASI.SR"
+
+  Australia / NZ:
+    "ASX 200" / "ASX"                               → "^AXJO"
+    "NZX 50"                                        → "^NZ50"
+
+For ANY other index the user mentions by a recognisable name or
+abbreviation, return your best guess of the Yahoo Finance ticker
+(prefix "^"). It's better to attempt a guess than to refuse —
+the downstream screener will report a clean error if the ticker
+turns out to be wrong. Only set universe to null and add a note
+when the user's query genuinely doesn't reference any index at all.
 
 SORT METRIC MAPPING (Lithuanian + English)
 - "market cap", "pagal market cap", "by mkt cap", "kapitalizacij*"  → "market_cap"
@@ -147,6 +202,15 @@ Output: {"action":"screen","universe":"^NDX","sort_by":"pe_ratio","sort_dir":"as
 
 Input: "DAX top 20 by ROE"
 Output: {"action":"screen","universe":"^GDAXI","sort_by":"roe","sort_dir":"desc","limit":20,"tickers":null,"framework_id":null,"notes":""}
+
+Input: "10 didziausiu imoniu wig 20 indekse"
+Output: {"action":"screen","universe":"^WIG20","sort_by":"market_cap","sort_dir":"desc","limit":10,"tickers":null,"framework_id":null,"notes":""}
+
+Input: "Top 5 NIFTY companies by revenue"
+Output: {"action":"screen","universe":"^NSEI","sort_by":"revenue","sort_dir":"desc","limit":5,"tickers":null,"framework_id":null,"notes":""}
+
+Input: "biggest 15 Bovespa names"
+Output: {"action":"screen","universe":"^BVSP","sort_by":"market_cap","sort_dir":"desc","limit":15,"tickers":null,"framework_id":null,"notes":""}
 
 Input: "Fisher analysis on Apple"
 Output: {"action":"report","tickers":["AAPL"],"framework_id":"fisher","universe":null,"sort_by":null,"sort_dir":null,"limit":null,"notes":""}

@@ -702,15 +702,16 @@ with col_left:
             action = (intent or {}).get("action")
             if action == "screen" and intent.get("universe"):
                 # Run the EODHD screener
+                _universe = intent["universe"]
                 with st.spinner(
-                    f"📊 Screening {intent['universe']} "
+                    f"📊 Screening {_universe} "
                     f"by {intent.get('sort_by') or 'market_cap'} "
                     f"({intent.get('sort_dir') or 'desc'})…  this can take ~1 min the first time"
                 ):
                     try:
                         from data_sources.screener_eodhd import screen_index
                         rows = screen_index(
-                            intent["universe"],
+                            _universe,
                             sort_by=intent.get("sort_by") or "market_cap",
                             sort_dir=intent.get("sort_dir") or "desc",
                             limit=intent.get("limit") or 10,
@@ -718,6 +719,13 @@ with col_left:
                     except Exception as _e:
                         rows = []
                         st.error(f"Screener failed: {_e}")
+                if not rows:
+                    st.warning(
+                        f"⚠ Could not get constituents for **{_universe}** "
+                        f"from EODHD. The index may not have components data "
+                        f"available, or the ticker code might differ. Try a "
+                        f"different index name or check {_universe} on EODHD."
+                    )
                 st.session_state.rg_screener_rows = rows
                 st.session_state.rg_active_ticker = ""   # no single ticker yet
             elif action in ("report", "compare") and intent.get("tickers"):
