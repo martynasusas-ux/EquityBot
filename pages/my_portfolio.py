@@ -282,6 +282,51 @@ def _fetch_history(yf_ticker: str, period: str) -> Optional[pd.DataFrame]:
         return None
 
 
+# ── Upcoming earnings date (cached) ───────────────────────────────────────────
+@st.cache_data(ttl=6 * 3600, show_spinner=False)   # 6-hour cache
+def _fetch_next_earnings(yf_ticker: str) -> Optional[str]:
+    """
+    Return the next upcoming earnings report date (YYYY-MM-DD) for the
+    ticker, or None if EODHD doesn't have one scheduled in the next 180 days.
+
+    Uses /calendar/earnings — works for most US + EU listings. Indices,
+    forex and ETFs return None.
+    """
+    eodhd_ticker = _convert_ticker(yf_ticker)
+    today = datetime.utcnow().date()
+    end   = today + timedelta(days=180)
+    data = _eodhd_get(
+        "/calendar/earnings",
+        params={
+            "symbols": eodhd_ticker,
+            "from":    today.isoformat(),
+            "to":      end.isoformat(),
+        },
+        timeout=30,
+    )
+    if not isinstance(data, dict):
+        return None
+    rows = data.get("earnings")
+    if not isinstance(rows, list) or not rows:
+        return None
+    upcoming: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        d = row.get("report_date") or row.get("date")
+        if not d:
+            continue
+        try:
+            dt = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if dt >= today:
+            upcoming.append(str(d)[:10])
+    if not upcoming:
+        return None
+    return min(upcoming)
+
+
 # ── News (cached) ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_news(yf_ticker: str, limit: int = 15) -> list[dict]:
@@ -452,6 +497,7 @@ with top_r:
         _fetch_snapshot.clear()
         _fetch_history.clear()
         _fetch_news.clear()
+        _fetch_next_earnings.clear()
         st.rerun()
 
 # Header row labels (only when there's at least one card)
@@ -481,16 +527,28 @@ else:
         rec_label, rec_color = _recommendation(snap)
         is_expanded = ticker in st.session_state.portfolio_expanded
         ytd_text, ytd_color = _fmt_signed_pct(snap.get("ytd_pct"))
+        next_earnings = _fetch_next_earnings(ticker)
 
         # ── Compact row ──────────────────────────────────────────────────────
         cols = st.columns([3, 1.4, 1.4, 1.0, 1.0, 1.2, 1.2, 0.55, 0.55])
 
-        # Name + ticker (truncated)
+        # Name + ticker + next earnings (truncated)
         name_disp = snap["name"][:38]
+        if next_earnings:
+            earnings_html = (
+                f"<span style='color:#1B3F6E;'>"
+                f"📅 Earnings: <b>{next_earnings}</b></span>"
+            )
+        else:
+            earnings_html = (
+                "<span style='color:#888;font-style:italic;'>"
+                "📅 Earnings: nepaskelbta dar</span>"
+            )
         cols[0].markdown(
-            f"<div style='line-height:1.2;'>"
+            f"<div style='line-height:1.25;'>"
             f"<b>{name_disp}</b><br>"
             f"<small style='color:#888;'>{ticker}</small>"
+            f"&nbsp;·&nbsp;<small>{earnings_html}</small>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -729,7 +787,7 @@ else:
 st.markdown("&nbsp;", unsafe_allow_html=True)
 st.caption(
     "All data: **EODHD All-In-One** · Snapshot cached 15 min · "
-    "History cached 30 min · News cached 30 min · "
+    "History 30 min · News 30 min · Earnings dates 6 h · "
     "Recommendation is a rule-based heuristic on P/E + ROE + EBIT margin "
     "— not investment advice."
 )
