@@ -417,7 +417,7 @@ def _build_report_types() -> dict:
 REPORT_TYPES = _build_report_types()
 
 # Builtin framework ids (for runner dispatch logic)
-_BUILTIN_IDS = {"fisher", "gravity", "kepler_summary",
+_BUILTIN_IDS = {"fisher", "fisher_peers", "gravity", "kepler_summary",
                 "eodhd_full", "overview_v2", "index_overview"}
 
 EXCHANGE_HINTS = {
@@ -1019,7 +1019,9 @@ with col_right:
         "Peer tickers",
         placeholder="REL.L  TRI.TO  MSFT  (space-separated, up to 6)",
         label_visibility="collapsed",
-        disabled=(report_type not in ("overview_v2", "fisher", "gravity")),
+        disabled=(report_type not in (
+            "overview_v2", "fisher", "fisher_peers", "gravity"
+        )),
         key="peers_input",
     )
 
@@ -1582,6 +1584,145 @@ if generate_clicked and ticker_input:
                                             adv_result=adv_result)
                 extra = {"score": score, "grade": grade}
 
+            elif report_type == "fisher_peers":
+                # ── Fisher Alternatives + Peers — main Fisher then peer batch
+                from data_sources.eodhd_only_builder import (
+                    fetch_company_data_eodhd_only, fetch_peers_eodhd_only,
+                )
+                from data_sources.eodhd_macro import fetch_country_macro_block
+                from models.fisher import (
+                    _fisher_prompt_parts, _validate_analysis,
+                    SYSTEM_PROMPT as SYS,
+                )
+
+                # Step 1: EODHD-only subject data
+                _prog.progress(20, text="🔬  Fetching EODHD-only Fisher data…")
+                st.write("🔬  Fetching EODHD bundle (fundamentals + news + insider)…")
+                company, _fpr_bundle = fetch_company_data_eodhd_only(ticker_input)
+                st.write(f"✓  EODHD endpoints used: {_fpr_bundle.get('endpoints_used',0)}/9")
+
+                # Step 2: Peers — required for this framework
+                fpr_peers: dict = {}
+                if peer_list:
+                    _prog.progress(35, text="🔍  Fetching EODHD peer data…")
+                    st.write(f"🔍  Fetching {len(peer_list)} peer(s) from EODHD…")
+                    fpr_peers = fetch_peers_eodhd_only(
+                        [p.strip().upper() for p in peer_list if p.strip()][:6]
+                    )
+                    st.write(f"✓  {len(fpr_peers)} peer(s) loaded: "
+                             f"{', '.join(fpr_peers.keys()) or 'none'}")
+                else:
+                    st.warning(
+                        "⚠ No peer tickers were supplied. The peer comparison "
+                        "page will be empty. Add peers in the **Peer Tickers** "
+                        "field (space-separated, up to 6)."
+                    )
+
+                # Step 3: Country macro for subject
+                _prog.progress(45, text="🌍  Fetching country macro from EODHD…")
+                fpr_country_macro = fetch_country_macro_block(company.country)
+
+                # Step 4: Main Fisher LLM call (same as Fisher framework)
+                cacheable_pfx, dynamic_prompt = _fisher_prompt_parts(
+                    company,
+                    bundle=_fpr_bundle,
+                    peers=fpr_peers,
+                    country_macro_block=fpr_country_macro,
+                )
+
+                if adversarial_on:
+                    full_prompt = cacheable_pfx + "\n\n" + dynamic_prompt
+                    adv_result = _adv_engine.run(
+                        full_prompt, SYS, max_tokens=6000,
+                        report_type="fisher",
+                    )
+                    analysis = _validate_analysis(adv_result.merged)
+                    score = analysis.get("fisher_total_score", "?")
+                    grade = analysis.get("fisher_grade", "?")
+                    st.write(f"✓  Merged Fisher Score: **{score}/75** (Grade {grade})")
+                else:
+                    analysis = llm.generate_json(
+                        dynamic_prompt, SYS, max_tokens=6000,
+                        cacheable_prefix=cacheable_pfx,
+                    )
+                    analysis = _validate_analysis(analysis)
+                    score = analysis.get("fisher_total_score", "?")
+                    grade = analysis.get("fisher_grade", "?")
+                    rec   = analysis.get("recommendation", "n/a")
+                    st.write(f"✓  Fisher Score: **{score}/75** (Grade {grade}) · "
+                             f"Rec: **{rec}**")
+                    _show_token_usage(llm.last_usage)
+
+                # Track main-Fisher Claude usage for the combined cost block
+                _fpr_main_usage = dict(llm.last_usage or {}) if not adversarial_on else {}
+
+                # Step 5: Peer-batch Fisher LLM call
+                peer_analyses: list = []
+                if fpr_peers:
+                    _prog.progress(75, text="🧮  Scoring peers (single LLM call)…")
+                    st.write("🧮  Scoring peers with Fisher 15-point framework…")
+                    try:
+                        from models.fisher_peers import (
+                            build_peer_prompt, validate_peer_analysis,
+                            _PEERS_SYSTEM_PROMPT,
+                        )
+                        peer_cache_pfx, peer_dynamic = build_peer_prompt(
+                            company, fpr_peers,
+                        )
+                        peer_raw = llm.generate_json(
+                            peer_dynamic, _PEERS_SYSTEM_PROMPT,
+                            max_tokens=4500,
+                            cacheable_prefix=peer_cache_pfx,
+                        )
+                        peer_analyses = validate_peer_analysis(
+                            peer_raw, list(fpr_peers.keys()),
+                        )
+                        # Show peer-batch token usage
+                        _peer_usage = dict(llm.last_usage or {})
+                        _show_token_usage(_peer_usage)
+                        # Combine main + peer-batch usage so the cost
+                        # block reflects everything Claude spent here.
+                        if not adversarial_on:
+                            for k, v in _peer_usage.items():
+                                _fpr_main_usage[k] = (
+                                    (_fpr_main_usage.get(k) or 0) +
+                                    (v or 0)
+                                )
+                        st.write(f"✓  Scored {len(peer_analyses)} peer(s).")
+                    except Exception as _pe:
+                        st.warning(f"Peer batch scoring failed: {_pe}")
+                        peer_analyses = []
+                else:
+                    _prog.progress(75, text="✓  Skipped peer scoring (no peers).")
+
+                # Step 6: Render PDF
+                _prog.progress(90, text="📄  Rendering Fisher + Peers PDF…")
+                st.write("📄  Rendering Fisher + Peers PDF...")
+                import importlib, agents.pdf_fisher_peers as _fprmod
+                importlib.reload(_fprmod)
+                from agents.pdf_fisher_peers import FisherPeersPDFGenerator
+                safe = ticker_input.replace(".", "_").replace("-", "_")
+                date = datetime.now().strftime("%Y-%m-%d")
+                pdf_path = str(OUTPUTS_DIR / f"{safe}_fisher_peers_{date}.pdf")
+                os.makedirs(OUTPUTS_DIR, exist_ok=True)
+                FisherPeersPDFGenerator().render(
+                    company, analysis, peer_analyses, fpr_peers,
+                    pdf_path, adv_result=adv_result,
+                )
+                # Make the combined Claude usage available to the result
+                # viewer's cost block. Stash on the llm client so the
+                # generic capture path below picks it up.
+                if not adversarial_on:
+                    try:
+                        llm.last_usage = _fpr_main_usage
+                    except Exception:
+                        pass
+                extra = {
+                    "score":      score,
+                    "grade":      grade,
+                    "peer_count": len(peer_analyses),
+                }
+
             elif report_type == "kepler_summary":
                 # ── Kepler-style analyst summary sheet (no LLM — pure data) ──
                 analysis = {}   # no LLM call; all content comes from CompanyData
@@ -1861,6 +2002,13 @@ if st.session_state.report_result:
                        f"Grade: **{extra.get('grade','?')}**  ·  "
                        f"Moat: {res['analysis'].get('moat_width','?')}  ·  "
                        f"Active Powers: {res['analysis'].get('active_powers_count','?')}/7")
+        elif rtype == "fisher_peers":
+            st.caption(
+                f"Fisher Score: **{extra.get('score','?')}/75**  ·  "
+                f"Grade: **{extra.get('grade','?')}**  ·  "
+                f"Moat: {res['analysis'].get('moat_width','?')}  ·  "
+                f"Peers analysed: **{extra.get('peer_count', 0)}**"
+            )
         elif rtype == "gravity":
             rm = res["analysis"].get("revenue_model", {})
             st.caption(f"Gravity Score: **{extra.get('score','?')}/50**  ·  "

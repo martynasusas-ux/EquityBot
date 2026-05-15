@@ -1,0 +1,167 @@
+{
+  "id": "fisher_peers",
+  "name": "Fisher Alternatives + Peers",
+  "icon": "🔬",
+  "description": "Fisher 15Q + Helmer 7 Powers on the subject company, plus a comparative Fisher score heat-map across up to 6 peer companies.",
+  "is_builtin": true,
+  "base_id": "fisher",
+  "version": 1,
+  "created_at": "2026-05-15T00:00:00",
+  "modified_at": "2026-05-15T00:00:00",
+  "system_prompt": "You are \"Your Humble EquityBot\" — a disciplined, forensic business analyst\nspecialising in qualitative assessment of competitive moats and management quality.\n\nYour analytical DNA:\n- You apply Philip Fisher's 15-point scuttlebutt framework rigorously.\n  Each of the 15 points receives an honest score — you do not pad weak points.\n- You apply Hamilton Helmer's 7 Powers framework to assess structural advantages.\n  A power only counts if it is genuinely durable and quantifiably significant.\n- You do not confuse a good business with a wide-moat business.\n- Your scores are calibrated: most companies score in the middle of the range.\n  Exceptional companies (5/5) and poor ones (1/5) are rare and must be earned.\n- You are a Devil's Advocate. For every strength, you ask: is this already priced in?\n  For every moat, you ask: what erodes it over a decade?\n- Precision over impressionism. Cite specific financials when scoring each point.\n- You never invent data. When the data provided is insufficient, you say so explicitly.",
+  "prompt_template": "__builtin__",
+  "output_schema": [
+    {
+      "name": "business_overview",
+      "type": "string",
+      "description": "250-350 word overview of the subject company.",
+      "required": true
+    },
+    {
+      "name": "fisher_points",
+      "type": "list",
+      "description": "15 scored Fisher points for the subject company.",
+      "required": true
+    },
+    {
+      "name": "fisher_total_score",
+      "type": "integer",
+      "description": "Subject company Fisher total (max 75).",
+      "required": true
+    },
+    {
+      "name": "fisher_grade",
+      "type": "enum",
+      "description": "Subject company Fisher grade.",
+      "required": true,
+      "enum_values": ["A", "B", "C", "D", "F"]
+    },
+    {
+      "name": "fisher_summary",
+      "type": "string",
+      "description": "100-150 word synthesis of the subject's Fisher assessment.",
+      "required": true
+    },
+    {
+      "name": "powers",
+      "type": "list",
+      "description": "7 Helmer powers for the subject company.",
+      "required": true
+    },
+    {
+      "name": "active_powers_count",
+      "type": "integer",
+      "description": "Count of subject's powers rated Strong or Moderate (0-7).",
+      "required": true
+    },
+    {
+      "name": "moat_width",
+      "type": "enum",
+      "description": "Subject company moat assessment.",
+      "required": true,
+      "enum_values": ["Wide", "Narrow", "None"]
+    },
+    {
+      "name": "moat_rationale",
+      "type": "string",
+      "description": "100-150 word subject company moat assessment.",
+      "required": true
+    },
+    {
+      "name": "key_risks",
+      "type": "list",
+      "description": "4 specific key risks for the subject company.",
+      "required": true
+    },
+    {
+      "name": "conclusion",
+      "type": "string",
+      "description": "200-300 word investment conclusion for subject.",
+      "required": true
+    },
+    {
+      "name": "recommendation",
+      "type": "enum",
+      "description": "Subject company recommendation.",
+      "required": true,
+      "enum_values": ["BUY", "HOLD", "SELL"]
+    },
+    {
+      "name": "recommendation_rationale",
+      "type": "string",
+      "description": "100-150 word subject recommendation rationale.",
+      "required": true
+    },
+    {
+      "name": "peers",
+      "type": "list",
+      "description": "Up to 6 peer companies — each with ticker, name, Fisher scores (15 ints), total, grade, summary, and reasons for difficult-to-score points.",
+      "required": true
+    }
+  ],
+  "report_sections": [
+    {
+      "id": "business_overview",
+      "type": "text_block",
+      "title": "Business Overview",
+      "field": "business_overview",
+      "order": 1
+    },
+    {
+      "id": "fisher_scorecard",
+      "type": "fisher_scorecard",
+      "title": "Philip Fisher 15-Point Scorecard",
+      "field": "fisher_points",
+      "order": 2
+    },
+    {
+      "id": "fisher_summary",
+      "type": "text_block",
+      "title": "Fisher Assessment Summary",
+      "field": "fisher_summary",
+      "order": 3
+    },
+    {
+      "id": "helmer_powers",
+      "type": "helmer_powers",
+      "title": "Hamilton Helmer 7 Powers",
+      "field": "powers",
+      "order": 4
+    },
+    {
+      "id": "moat_rationale",
+      "type": "text_block",
+      "title": "Moat Assessment",
+      "field": "moat_rationale",
+      "order": 5
+    },
+    {
+      "id": "key_risks",
+      "type": "bullet_list",
+      "title": "Key Risks",
+      "field": "key_risks",
+      "order": 6
+    },
+    {
+      "id": "conclusion",
+      "type": "text_block",
+      "title": "Investment Conclusion",
+      "field": "conclusion",
+      "order": 7
+    },
+    {
+      "id": "recommendation",
+      "type": "recommendation_banner",
+      "title": "Recommendation",
+      "field": "recommendation",
+      "order": 8
+    },
+    {
+      "id": "peer_comparison",
+      "type": "peer_fisher_heatmap",
+      "title": "Peer Group Fisher Comparison",
+      "field": "peers",
+      "order": 9
+    }
+  ]
+}
